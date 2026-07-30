@@ -226,11 +226,20 @@ struct WorkspaceControllerTests {
     controller.recordTerminalOutput(sessionID: first.id, isVisible: false)
     #expect(controller.outputActivity(for: tab).isProducingOutput)
     #expect(controller.outputActivity(for: tab).hasUnreadOutput)
-    #expect(controller.outputActivityDescription(for: tab) == "Unread terminal output")
+    #expect(controller.outputActivityDescription(for: tab) == "Producing unread terminal output")
+    #expect(
+      TerminalTabActivityVisualState(activity: controller.outputActivity(for: tab))
+        == .producingOutput
+    )
 
     controller.finishTerminalOutputBurst(sessionID: first.id)
     #expect(!controller.outputActivity(for: tab).isProducingOutput)
     #expect(controller.outputActivity(for: tab).hasUnreadOutput)
+    #expect(controller.outputActivityDescription(for: tab) == "Unread terminal output")
+    #expect(
+      TerminalTabActivityVisualState(activity: controller.outputActivity(for: tab))
+        == .unreadOutput
+    )
 
     controller.recordTerminalOutput(sessionID: second.id, isVisible: true)
     #expect(controller.outputActivity(for: tab).isProducingOutput)
@@ -241,6 +250,7 @@ struct WorkspaceControllerTests {
     #expect(controller.outputActivity(for: tab).isProducingOutput)
     controller.finishTerminalOutputBurst(sessionID: second.id)
     #expect(controller.outputActivity(for: tab) == .idle)
+    #expect(TerminalTabActivityVisualState(activity: .idle) == .idle)
 
     controller.recordTerminalOutput(sessionID: UUID(), isVisible: false)
     #expect(controller.sessionOutputActivity.isEmpty)

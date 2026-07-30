@@ -1070,6 +1070,22 @@ enum SidebarProjectGroupLayout {
   static let separatorAccessibilityHidden = true
 }
 
+enum TerminalTabActivityVisualState: Equatable {
+  case producingOutput
+  case unreadOutput
+  case idle
+
+  init(activity: SessionOutputActivity) {
+    if activity.isProducingOutput {
+      self = .producingOutput
+    } else if activity.hasUnreadOutput {
+      self = .unreadOutput
+    } else {
+      self = .idle
+    }
+  }
+}
+
 private struct TerminalTabActivityIndicator: View {
   let activity: SessionOutputActivity
   let status: SessionStatus?
@@ -1077,6 +1093,7 @@ private struct TerminalTabActivityIndicator: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
+    let visualState = TerminalTabActivityVisualState(activity: activity)
     ZStack {
       ZStack {
         Circle()
@@ -1086,24 +1103,24 @@ private struct TerminalTabActivityIndicator: View {
           .fill(accentColor)
           .frame(width: 6, height: 6)
       }
-      .opacity(activity.hasUnreadOutput ? 1 : 0)
-      .scaleEffect(activity.hasUnreadOutput ? 1 : 0.82)
+      .opacity(visualState == .unreadOutput ? 1 : 0)
+      .scaleEffect(visualState == .unreadOutput ? 1 : 0.82)
 
       Image(systemName: "waveform")
         .font(.system(size: 10, weight: .bold))
         .foregroundStyle(Color.green)
         .symbolEffect(
           .variableColor.iterative, options: .repeating,
-          isActive: activity.isProducingOutput && !activity.hasUnreadOutput && !reduceMotion
+          isActive: visualState == .producingOutput && !reduceMotion
         )
-        .opacity(activity.isProducingOutput && !activity.hasUnreadOutput ? 1 : 0)
-        .scaleEffect(activity.isProducingOutput && !activity.hasUnreadOutput ? 1 : 0.82)
+        .opacity(visualState == .producingOutput ? 1 : 0)
+        .scaleEffect(visualState == .producingOutput ? 1 : 0.82)
 
       Circle()
         .fill(statusColor)
         .frame(width: 7, height: 7)
-        .opacity(!activity.hasUnreadOutput && !activity.isProducingOutput ? 1 : 0)
-        .scaleEffect(!activity.hasUnreadOutput && !activity.isProducingOutput ? 1 : 0.82)
+        .opacity(visualState == .idle ? 1 : 0)
+        .scaleEffect(visualState == .idle ? 1 : 0.82)
     }
     .frame(width: 12, height: 12)
     .animation(OperatorMotion.quick(reduceMotion: reduceMotion), value: activity)
@@ -2101,6 +2118,8 @@ private struct ProjectEmojiPicker: View {
       }
     }
     .buttonStyle(.plain)
+    .accessibilityLabel(emoji.isEmpty ? "Choose project emoji" : "Change project emoji")
+    .accessibilityValue(emoji.isEmpty ? "None selected" : emoji)
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
       OperatorEmojiPickerPopover(emoji: $emoji, isPresented: $isPresented)
     }

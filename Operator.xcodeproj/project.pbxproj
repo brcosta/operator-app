@@ -31,6 +31,8 @@
 		200000000000000000000018 /* OperatorDebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000018 /* OperatorDebugLog.swift */; };
 		200000000000000000000019 /* ProjectManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000019 /* ProjectManagerView.swift */; };
 		20000000000000000000001A /* OperatorNotificationBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000001A /* OperatorNotificationBridge.m */; };
+		20000000000000000000001C /* TerminalColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000001C /* TerminalColorPalette.swift */; };
+		20000000000000000000001D /* TerminalPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000001D /* TerminalPreferences.swift */; };
 		200000000000000000000021 /* OperatorUITestCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000021 /* OperatorUITestCase.swift */; };
 		200000000000000000000022 /* OperatorLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000022 /* OperatorLaunchUITests.swift */; };
 		200000000000000000000023 /* OperatorWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000023 /* OperatorWorkflowUITests.swift */; };
@@ -76,6 +78,8 @@
 		300000000000000000000019 /* ProjectManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/ProjectManagement/ProjectManagerView.swift; sourceTree = "<group>"; };
 		30000000000000000000001A /* OperatorNotificationBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ../OperatorNotificationBridge/OperatorNotificationBridge.m; sourceTree = "<group>"; };
 		30000000000000000000001B /* OperatorNotificationBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ../OperatorNotificationBridge/include/OperatorNotificationBridge.h; sourceTree = "<group>"; };
+		30000000000000000000001C /* TerminalColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/TerminalColorPalette.swift; sourceTree = "<group>"; };
+		30000000000000000000001D /* TerminalPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/TerminalPreferences.swift; sourceTree = "<group>"; };
 		300000000000000000000021 /* OperatorUITestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorUITestCase.swift; sourceTree = "<group>"; };
 		300000000000000000000022 /* OperatorLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorLaunchUITests.swift; sourceTree = "<group>"; };
 		300000000000000000000023 /* OperatorWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorWorkflowUITests.swift; sourceTree = "<group>"; };
@@ -135,7 +139,9 @@
 				300000000000000000000010 /* StateStore.swift */,
 				300000000000000000000011 /* Supervision.swift */,
 				300000000000000000000012 /* SupervisionViews.swift */,
+				30000000000000000000001C /* TerminalColorPalette.swift */,
 				300000000000000000000013 /* TerminalLayout.swift */,
+				30000000000000000000001D /* TerminalPreferences.swift */,
 				300000000000000000000014 /* WorkspaceView.swift */,
 				300000000000000000000015 /* NativeMacIntegration.swift */,
 				300000000000000000000016 /* HarnessHookIntegration.swift */,
@@ -280,7 +286,9 @@
 				200000000000000000000010 /* StateStore.swift in Sources */,
 				200000000000000000000011 /* Supervision.swift in Sources */,
 				200000000000000000000012 /* SupervisionViews.swift in Sources */,
+				20000000000000000000001C /* TerminalColorPalette.swift in Sources */,
 				200000000000000000000013 /* TerminalLayout.swift in Sources */,
+				20000000000000000000001D /* TerminalPreferences.swift in Sources */,
 				200000000000000000000014 /* WorkspaceView.swift in Sources */,
 				200000000000000000000015 /* NativeMacIntegration.swift in Sources */,
 				200000000000000000000016 /* HarnessHookIntegration.swift in Sources */,

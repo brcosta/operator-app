@@ -5,13 +5,13 @@ final class OperatorLaunchUITests: OperatorUITestCase {
     XCTAssertTrue(button("operator.newProject").waitForExistence(timeout: 5))
     XCTAssertFalse(button("operator.activity").exists)
     XCTAssertTrue(app.staticTexts["Build your command center"].waitForExistence(timeout: 3))
-    XCTAssertTrue(app.staticTexts["No focused terminal"].exists)
+    XCTAssertTrue(button("operator.emptyWorkspace.addProject").exists)
   }
 
   func testNewProjectCanBeCreatedFromToolbar() {
-    addProject(named: "UI Test Project")
+    let project = addProject(named: "UI Test Project")
     XCTAssertFalse(app.staticTexts["operator.projectEditor.title"].exists)
-    XCTAssertTrue(app.staticTexts["UI Test Project"].exists)
+    XCTAssertTrue(project.exists)
   }
 
   func testEmojiPickerSelectsAProjectEmojiInsideOperator() {
@@ -24,7 +24,7 @@ final class OperatorLaunchUITests: OperatorUITestCase {
     XCTAssertTrue(rocket.waitForExistence(timeout: 3))
     rocket.click()
 
-    XCTAssertTrue(app.staticTexts["🚀"].waitForExistence(timeout: 3))
-    XCTAssertTrue(button("operator.projectEditor.emoji").exists)
+    XCTAssertTrue(emojiPicker.waitForExistence(timeout: 3))
+    XCTAssertEqual(emojiPicker.value as? String, "🚀")
   }
 }

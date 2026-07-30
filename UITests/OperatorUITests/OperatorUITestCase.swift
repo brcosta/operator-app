@@ -49,8 +49,12 @@ class OperatorUITestCase: XCTestCase {
     XCTAssertTrue(add.isEnabled)
     add.click()
 
-    let project = app.staticTexts[name]
+    let project =
+      app.descendants(matching: .any)
+      .matching(NSPredicate(format: "identifier BEGINSWITH %@", "operator.project."))
+      .firstMatch
     XCTAssertTrue(project.waitForExistence(timeout: 3))
+    XCTAssertTrue(project.label.contains(name))
     return project
   }
 

@@ -279,8 +279,11 @@ final class WorkspaceController: ObservableObject {
 
   func outputActivityDescription(for tab: WorkspaceTab) -> String {
     let activity = outputActivity(for: tab)
-    if activity.hasUnreadOutput { return "Unread terminal output" }
+    if activity.isProducingOutput && activity.hasUnreadOutput {
+      return "Producing unread terminal output"
+    }
     if activity.isProducingOutput { return "Producing terminal output" }
+    if activity.hasUnreadOutput { return "Unread terminal output" }
     return "No unread terminal output"
   }
   var selectedProject: Project? {
