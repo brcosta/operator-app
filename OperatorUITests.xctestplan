@@ -1,0 +1,34 @@
+{
+  "configurations" : [
+    {
+      "id" : "D6C94D47-4577-48EB-8B0A-92743E7A3671",
+      "name" : "UI Tests",
+      "options" : {
+        "maximumTestExecutionTimeAllowance" : 60,
+        "testRepetitionMode" : "none"
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Operator.xcodeproj",
+      "identifier" : "100000000000000000000001",
+      "name" : "Operator"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "skippedTests" : [
+
+      ],
+      "target" : {
+        "containerPath" : "container:Operator.xcodeproj",
+        "identifier" : "100000000000000000000002",
+        "name" : "OperatorUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

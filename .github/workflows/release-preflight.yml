@@ -1,0 +1,77 @@
+name: Experimental Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to package and publish as an experimental release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: experimental-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  package-and-publish:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Verify release tag matches version configuration
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          configured_version=$(sed -n 's/^MARKETING_VERSION = //p' Config/Version.xcconfig | tr -d '[:space:]')
+          [[ "${RELEASE_TAG#v}" == "$configured_version" ]]
+      - name: Run tests
+        run: swift test
+      - name: Package experimental DMG
+        run: |
+          version="${RELEASE_TAG#v}"
+          artifact_name="Operator-${version}-experimental"
+          zsh Scripts/package-app.sh dist/Operator.app
+          hdiutil create \
+            -volname 'Operator Experimental' \
+            -srcfolder dist/Operator.app \
+            -ov \
+            -format UDZO \
+            "dist/${artifact_name}.dmg"
+          shasum -a 256 "dist/${artifact_name}.dmg" > "dist/${artifact_name}.dmg.sha256"
+      - name: Verify release metadata
+        run: |
+          expected_version=$(sed -n 's/^MARKETING_VERSION = //p' Config/Version.xcconfig | tr -d '[:space:]')
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/Operator.app/Contents/Info.plist)" == "$expected_version" ]]
+      - name: Upload experimental release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: operator-macos-experimental-${{ env.RELEASE_TAG }}
+          path: |
+            dist/*.dmg
+            dist/*.dmg.sha256
+          retention-days: 30
+      - name: Publish experimental GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          artifact_name="Operator-${version}-experimental"
+          notes=$'## Experimental build\n\nThis is an unsigned, unnotarized development build. macOS Gatekeeper may require explicit approval before opening it. Do not treat it as a production release.\n\nThe accompanying `.sha256` file lets you verify the downloaded DMG.'
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "dist/${artifact_name}.dmg" "dist/${artifact_name}.dmg.sha256" --clobber
+            gh release edit "$RELEASE_TAG" --title "Operator ${RELEASE_TAG} — Experimental" --prerelease --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" "dist/${artifact_name}.dmg" "dist/${artifact_name}.dmg.sha256" \
+              --title "Operator ${RELEASE_TAG} — Experimental" \
+              --prerelease \
+              --notes "$notes"
+          fi

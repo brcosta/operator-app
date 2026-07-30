@@ -1,0 +1,481 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		200000000000000000000001 /* ArtifactView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000001 /* ArtifactView.swift */; };
+		200000000000000000000002 /* CommandPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000002 /* CommandPalette.swift */; };
+		200000000000000000000003 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000003 /* Diagnostics.swift */; };
+		200000000000000000000005 /* GitWorkspaceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000005 /* GitWorkspaceMonitor.swift */; };
+		200000000000000000000006 /* HarnessEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000006 /* HarnessEvents.swift */; };
+		200000000000000000000007 /* MarkdownViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000007 /* MarkdownViewer.swift */; };
+		200000000000000000000008 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000008 /* Models.swift */; };
+		200000000000000000000009 /* OperatorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000009 /* OperatorApp.swift */; };
+		20000000000000000000000A /* OperatorIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000000A /* OperatorIntegration.swift */; };
+		20000000000000000000000B /* OperatorMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000000B /* OperatorMain.swift */; };
+		20000000000000000000000D /* ProjectServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000000D /* ProjectServices.swift */; };
+		20000000000000000000000E /* SessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000000E /* SessionController.swift */; };
+		20000000000000000000000F /* ShortcutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000000F /* ShortcutSettings.swift */; };
+		200000000000000000000010 /* StateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000010 /* StateStore.swift */; };
+		200000000000000000000011 /* Supervision.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000011 /* Supervision.swift */; };
+		200000000000000000000012 /* SupervisionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000012 /* SupervisionViews.swift */; };
+		200000000000000000000013 /* TerminalLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000013 /* TerminalLayout.swift */; };
+		200000000000000000000014 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000014 /* WorkspaceView.swift */; };
+		200000000000000000000015 /* NativeMacIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000015 /* NativeMacIntegration.swift */; };
+		200000000000000000000016 /* HarnessHookIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000016 /* HarnessHookIntegration.swift */; };
+		200000000000000000000017 /* GitRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000017 /* GitRepository.swift */; };
+		200000000000000000000018 /* OperatorDebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000018 /* OperatorDebugLog.swift */; };
+		200000000000000000000019 /* ProjectManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000019 /* ProjectManagerView.swift */; };
+		20000000000000000000001A /* OperatorNotificationBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 30000000000000000000001A /* OperatorNotificationBridge.m */; };
+		200000000000000000000021 /* OperatorUITestCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000021 /* OperatorUITestCase.swift */; };
+		200000000000000000000022 /* OperatorLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000022 /* OperatorLaunchUITests.swift */; };
+		200000000000000000000023 /* OperatorWorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000023 /* OperatorWorkflowUITests.swift */; };
+		200000000000000000000031 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 800000000000000000000001 /* SwiftTerm */; };
+		200000000000000000000032 /* cmark-gfm in Frameworks */ = {isa = PBXBuildFile; productRef = 800000000000000000000002 /* cmark-gfm */; };
+		200000000000000000000033 /* cmark-gfm-extensions in Frameworks */ = {isa = PBXBuildFile; productRef = 800000000000000000000003 /* cmark-gfm-extensions */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		400000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000001;
+			remoteInfo = Operator;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		300000000000000000000050 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Version.xcconfig; path = Config/Version.xcconfig; sourceTree = "<group>"; };
+		300000000000000000000001 /* ArtifactView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Artifacts/ArtifactView.swift; sourceTree = "<group>"; };
+		300000000000000000000002 /* CommandPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Workspace/CommandPalette.swift; sourceTree = "<group>"; };
+		300000000000000000000003 /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Diagnostics.swift; sourceTree = "<group>"; };
+		300000000000000000000005 /* GitWorkspaceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/GitWorkspaceMonitor.swift; sourceTree = "<group>"; };
+		300000000000000000000006 /* HarnessEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/HarnessEvents.swift; sourceTree = "<group>"; };
+		300000000000000000000007 /* MarkdownViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Viewers/MarkdownViewer.swift; sourceTree = "<group>"; };
+		300000000000000000000008 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Models.swift; sourceTree = "<group>"; };
+		300000000000000000000009 /* OperatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/OperatorApp.swift; sourceTree = "<group>"; };
+		30000000000000000000000A /* OperatorIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/OperatorIntegration.swift; sourceTree = "<group>"; };
+		30000000000000000000000B /* OperatorMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/OperatorMain.swift; sourceTree = "<group>"; };
+		30000000000000000000000D /* ProjectServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ProjectServices.swift; sourceTree = "<group>"; };
+		30000000000000000000000E /* SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/SessionController.swift; sourceTree = "<group>"; };
+		30000000000000000000000F /* ShortcutSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Settings/ShortcutSettings.swift; sourceTree = "<group>"; };
+		300000000000000000000010 /* StateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/StateStore.swift; sourceTree = "<group>"; };
+		300000000000000000000011 /* Supervision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Activity/Supervision.swift; sourceTree = "<group>"; };
+		300000000000000000000012 /* SupervisionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Activity/SupervisionViews.swift; sourceTree = "<group>"; };
+		300000000000000000000013 /* TerminalLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/TerminalLayout.swift; sourceTree = "<group>"; };
+		300000000000000000000014 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Workspace/WorkspaceView.swift; sourceTree = "<group>"; };
+		300000000000000000000015 /* NativeMacIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/NativeMacIntegration.swift; sourceTree = "<group>"; };
+		300000000000000000000016 /* HarnessHookIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/HarnessHookIntegration.swift; sourceTree = "<group>"; };
+		300000000000000000000017 /* GitRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Git/GitRepository.swift; sourceTree = "<group>"; };
+		300000000000000000000018 /* OperatorDebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/OperatorDebugLog.swift; sourceTree = "<group>"; };
+		300000000000000000000019 /* ProjectManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/ProjectManagement/ProjectManagerView.swift; sourceTree = "<group>"; };
+		30000000000000000000001A /* OperatorNotificationBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ../OperatorNotificationBridge/OperatorNotificationBridge.m; sourceTree = "<group>"; };
+		30000000000000000000001B /* OperatorNotificationBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ../OperatorNotificationBridge/include/OperatorNotificationBridge.h; sourceTree = "<group>"; };
+		300000000000000000000021 /* OperatorUITestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorUITestCase.swift; sourceTree = "<group>"; };
+		300000000000000000000022 /* OperatorLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorLaunchUITests.swift; sourceTree = "<group>"; };
+		300000000000000000000023 /* OperatorWorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorWorkflowUITests.swift; sourceTree = "<group>"; };
+		300000000000000000000030 /* OperatorUITests.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = OperatorUITests.xctestplan; sourceTree = "<group>"; };
+		300000000000000000000041 /* Operator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Operator.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		300000000000000000000042 /* OperatorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OperatorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		500000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				200000000000000000000031 /* SwiftTerm in Frameworks */,
+				200000000000000000000032 /* cmark-gfm in Frameworks */,
+				200000000000000000000033 /* cmark-gfm-extensions in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		500000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		600000000000000000000000 = {
+			isa = PBXGroup;
+			children = (
+				300000000000000000000050 /* Version.xcconfig */,
+				600000000000000000000001 /* Operator */,
+				600000000000000000000002 /* OperatorUITests */,
+				300000000000000000000030 /* OperatorUITests.xctestplan */,
+				600000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		600000000000000000000001 /* Operator */ = {
+			isa = PBXGroup;
+			children = (
+				300000000000000000000001 /* ArtifactView.swift */,
+				300000000000000000000002 /* CommandPalette.swift */,
+				300000000000000000000003 /* Diagnostics.swift */,
+				300000000000000000000005 /* GitWorkspaceMonitor.swift */,
+				300000000000000000000006 /* HarnessEvents.swift */,
+				300000000000000000000007 /* MarkdownViewer.swift */,
+				300000000000000000000008 /* Models.swift */,
+				300000000000000000000009 /* OperatorApp.swift */,
+				30000000000000000000000A /* OperatorIntegration.swift */,
+				30000000000000000000000B /* OperatorMain.swift */,
+				30000000000000000000000D /* ProjectServices.swift */,
+				30000000000000000000000E /* SessionController.swift */,
+				30000000000000000000000F /* ShortcutSettings.swift */,
+				300000000000000000000010 /* StateStore.swift */,
+				300000000000000000000011 /* Supervision.swift */,
+				300000000000000000000012 /* SupervisionViews.swift */,
+				300000000000000000000013 /* TerminalLayout.swift */,
+				300000000000000000000014 /* WorkspaceView.swift */,
+				300000000000000000000015 /* NativeMacIntegration.swift */,
+				300000000000000000000016 /* HarnessHookIntegration.swift */,
+				300000000000000000000017 /* GitRepository.swift */,
+				300000000000000000000018 /* OperatorDebugLog.swift */,
+				300000000000000000000019 /* ProjectManagerView.swift */,
+				30000000000000000000001A /* OperatorNotificationBridge.m */,
+				30000000000000000000001B /* OperatorNotificationBridge.h */,
+			);
+			name = Operator;
+			path = Sources/Operator;
+			sourceTree = "<group>";
+		};
+		600000000000000000000002 /* OperatorUITests */ = {
+			isa = PBXGroup;
+			children = (
+				300000000000000000000021 /* OperatorUITestCase.swift */,
+				300000000000000000000022 /* OperatorLaunchUITests.swift */,
+				300000000000000000000023 /* OperatorWorkflowUITests.swift */,
+			);
+			name = OperatorUITests;
+			path = UITests/OperatorUITests;
+			sourceTree = "<group>";
+		};
+		600000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				300000000000000000000041 /* Operator.app */,
+				300000000000000000000042 /* OperatorUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000001 /* Operator */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000001 /* Build configuration list for PBXNativeTarget "Operator" */;
+			buildPhases = (
+				500000000000000000000011 /* Sources */,
+				500000000000000000000001 /* Frameworks */,
+				500000000000000000000021 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Operator;
+			packageProductDependencies = (
+				800000000000000000000001 /* SwiftTerm */,
+				800000000000000000000002 /* cmark-gfm */,
+				800000000000000000000003 /* cmark-gfm-extensions */,
+			);
+			productName = Operator;
+			productReference = 300000000000000000000041 /* Operator.app */;
+			productType = "com.apple.product-type.application";
+		};
+		100000000000000000000002 /* OperatorUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000002 /* Build configuration list for PBXNativeTarget "OperatorUITests" */;
+			buildPhases = (
+				500000000000000000000012 /* Sources */,
+				500000000000000000000002 /* Frameworks */,
+				500000000000000000000022 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				400000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = OperatorUITests;
+			productName = OperatorUITests;
+			productReference = 300000000000000000000042 /* OperatorUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		100000000000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					100000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					100000000000000000000002 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 100000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = 900000000000000000000000 /* Build configuration list for PBXProject "Operator" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 600000000000000000000000;
+			packageReferences = (
+				700000000000000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				700000000000000000000002 /* XCRemoteSwiftPackageReference "swift-cmark" */,
+			);
+			productRefGroup = 600000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				100000000000000000000001 /* Operator */,
+				100000000000000000000002 /* OperatorUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		500000000000000000000021 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		500000000000000000000022 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		500000000000000000000011 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				200000000000000000000001 /* ArtifactView.swift in Sources */,
+				200000000000000000000002 /* CommandPalette.swift in Sources */,
+				200000000000000000000003 /* Diagnostics.swift in Sources */,
+				200000000000000000000005 /* GitWorkspaceMonitor.swift in Sources */,
+				200000000000000000000006 /* HarnessEvents.swift in Sources */,
+				200000000000000000000007 /* MarkdownViewer.swift in Sources */,
+				200000000000000000000008 /* Models.swift in Sources */,
+				200000000000000000000009 /* OperatorApp.swift in Sources */,
+				20000000000000000000000A /* OperatorIntegration.swift in Sources */,
+				20000000000000000000000B /* OperatorMain.swift in Sources */,
+				20000000000000000000000D /* ProjectServices.swift in Sources */,
+				20000000000000000000000E /* SessionController.swift in Sources */,
+				20000000000000000000000F /* ShortcutSettings.swift in Sources */,
+				200000000000000000000010 /* StateStore.swift in Sources */,
+				200000000000000000000011 /* Supervision.swift in Sources */,
+				200000000000000000000012 /* SupervisionViews.swift in Sources */,
+				200000000000000000000013 /* TerminalLayout.swift in Sources */,
+				200000000000000000000014 /* WorkspaceView.swift in Sources */,
+				200000000000000000000015 /* NativeMacIntegration.swift in Sources */,
+				200000000000000000000016 /* HarnessHookIntegration.swift in Sources */,
+				200000000000000000000017 /* GitRepository.swift in Sources */,
+				200000000000000000000018 /* OperatorDebugLog.swift in Sources */,
+				200000000000000000000019 /* ProjectManagerView.swift in Sources */,
+				20000000000000000000001A /* OperatorNotificationBridge.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		500000000000000000000012 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				200000000000000000000021 /* OperatorUITestCase.swift in Sources */,
+				200000000000000000000022 /* OperatorLaunchUITests.swift in Sources */,
+				200000000000000000000023 /* OperatorWorkflowUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		400000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000001 /* Operator */;
+			targetProxy = 400000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000001 /* Debug */ = {
+			baseConfigurationReference = 300000000000000000000050 /* Version.xcconfig */;
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000002 /* Release */ = {
+			baseConfigurationReference = 300000000000000000000050 /* Version.xcconfig */;
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/OperatorNotificationBridge/include";
+				INFOPLIST_FILE = Packaging/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = local.operator.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = Sources/OperatorNotificationBridge/include/OperatorNotificationBridge.h;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/Sources/OperatorNotificationBridge/include";
+				INFOPLIST_FILE = Packaging/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = local.operator.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = Sources/OperatorNotificationBridge/include/OperatorNotificationBridge.h;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = local.operator.app.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Operator;
+			};
+			name = Debug;
+		};
+		A00000000000000000000022 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = local.operator.app.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Operator;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		900000000000000000000000 /* Build configuration list for PBXProject "Operator" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000001 /* Debug */,
+				A00000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000001 /* Build configuration list for PBXNativeTarget "Operator" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000011 /* Debug */,
+				A00000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000002 /* Build configuration list for PBXNativeTarget "OperatorUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000021 /* Debug */,
+				A00000000000000000000022 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		700000000000000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.10.0;
+			};
+		};
+		700000000000000000000002 /* XCRemoteSwiftPackageReference "swift-cmark" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-cmark.git";
+			requirement = {
+				kind = revision;
+				revision = 0101bf2c6ff6a218f93150f340fe5ccf76d9f3aa;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		800000000000000000000001 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 700000000000000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+		800000000000000000000002 /* cmark-gfm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 700000000000000000000002 /* XCRemoteSwiftPackageReference "swift-cmark" */;
+			productName = "cmark-gfm";
+		};
+		800000000000000000000003 /* cmark-gfm-extensions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 700000000000000000000002 /* XCRemoteSwiftPackageReference "swift-cmark" */;
+			productName = "cmark-gfm-extensions";
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 100000000000000000000000 /* Project object */;
+}

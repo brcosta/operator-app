@@ -1,0 +1,39 @@
+name: UI Tests
+
+on:
+  pull_request:
+  schedule:
+    - cron: '43 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcode-ui-tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Run macOS UI tests
+        run: |
+          xcodebuild test \
+            -project Operator.xcodeproj \
+            -scheme Operator \
+            -testPlan OperatorUITests \
+            -destination 'platform=macOS,arch=arm64' \
+            -resultBundlePath TestResults.xcresult \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Upload Xcode result bundle
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: operator-ui-test-results
+          path: TestResults.xcresult
+          if-no-files-found: warn
+          retention-days: 14

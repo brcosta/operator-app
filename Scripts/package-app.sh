@@ -1,0 +1,50 @@
+#!/bin/zsh
+set -euo pipefail
+
+root_dir=$(cd "$(dirname "$0")/.." && pwd)
+bundle="${1:-$root_dir/dist/Operator.app}"
+version_config="$root_dir/Config/Version.xcconfig"
+
+if [[ ! -r "$version_config" ]]; then
+  print -u2 "Missing version configuration at $version_config"
+  exit 1
+fi
+
+marketing_version=$(sed -n 's/^MARKETING_VERSION = //p' "$version_config" | tr -d '[:space:]')
+build_number=$(sed -n 's/^CURRENT_PROJECT_VERSION = //p' "$version_config" | tr -d '[:space:]')
+
+if [[ ! "$marketing_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$build_number" =~ ^[1-9][0-9]*$ ]]; then
+  print -u2 "Config/Version.xcconfig must define a semantic MARKETING_VERSION and positive CURRENT_PROJECT_VERSION"
+  exit 1
+fi
+
+if [[ -e "$bundle" ]]; then
+  print -u2 "Refusing to overwrite $bundle"
+  exit 1
+fi
+
+cd "$root_dir"
+swift build -c release
+mkdir -p "$root_dir/dist"
+staging=$(mktemp -d "$root_dir/dist/operator-package.XXXXXX")
+trap 'rm -rf "$staging"' EXIT
+staged_bundle="$staging/Operator.app"
+mkdir -p "$staged_bundle/Contents/MacOS" "$staged_bundle/Contents/Resources"
+cp .build/release/Operator "$staged_bundle/Contents/MacOS/Operator"
+cp Packaging/Info.plist "$staged_bundle/Contents/Info.plist"
+cp Packaging/Operator.icns "$staged_bundle/Contents/Resources/Operator.icns"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$staged_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$staged_bundle/Contents/Info.plist"
+chmod 755 "$staged_bundle/Contents/MacOS/Operator"
+chmod 644 "$staged_bundle/Contents/Info.plist" "$staged_bundle/Contents/Resources/Operator.icns"
+/usr/bin/plutil -lint "$staged_bundle/Contents/Info.plist" >/dev/null
+cmp -s .build/release/Operator "$staged_bundle/Contents/MacOS/Operator"
+/usr/bin/codesign \
+  --force \
+  --sign - \
+  --options runtime \
+  --timestamp=none \
+  "$staged_bundle"
+/usr/bin/codesign --verify --deep --strict "$staged_bundle"
+mv "$staged_bundle" "$bundle"
+print "Created hardened $bundle (version $marketing_version, build $build_number)"
