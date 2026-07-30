@@ -24,6 +24,8 @@ final class OperatorWorkflowUITests: OperatorUITestCase {
   }
 
   func testActivityAndShortcutSheetsOpenAndDismiss() {
+    addProject(named: "Activity Project")
+
     let activity = button("operator.activity")
     XCTAssertTrue(activity.waitForExistence(timeout: 3))
     activity.click()

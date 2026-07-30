@@ -2118,6 +2118,8 @@ private struct ProjectEmojiPicker: View {
       }
     }
     .buttonStyle(.plain)
+    .accessibilityLabel(emoji.isEmpty ? "Choose project emoji" : "Change project emoji")
+    .accessibilityValue(emoji.isEmpty ? "None selected" : emoji)
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
       OperatorEmojiPickerPopover(emoji: $emoji, isPresented: $isPresented)
     }

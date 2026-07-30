@@ -49,7 +49,7 @@ class OperatorUITestCase: XCTestCase {
     XCTAssertTrue(add.isEnabled)
     add.click()
 
-    let project = app.staticTexts[name]
+    let project = app.buttons[name].firstMatch
     XCTAssertTrue(project.waitForExistence(timeout: 3))
     return project
   }
