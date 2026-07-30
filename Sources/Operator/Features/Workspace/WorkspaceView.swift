@@ -1159,6 +1159,7 @@ private struct SidebarView: View {
           VStack(alignment: .leading, spacing: 0) {
             projectRow(project, hasTabs: !projectTabs.isEmpty)
               .accessibilityIdentifier("operator.project.\(project.id.uuidString)")
+              .accessibilityLabel(project.name)
               .help(project.workspaces.first?.directory ?? "")
               .contextMenu {
                 Button("Add Workspace") { repositoryProject = project }
@@ -1705,6 +1706,7 @@ private struct ProjectEditor: View {
             HStack(spacing: 14) {
               ProjectEmojiPicker(emoji: $emoji)
                 .accessibilityIdentifier("operator.projectEditor.emoji")
+                .accessibilityValue(emoji.isEmpty ? "None selected" : emoji)
               Spacer()
               ForEach(ProjectAccent.allCases) { choice in
                 Button {
