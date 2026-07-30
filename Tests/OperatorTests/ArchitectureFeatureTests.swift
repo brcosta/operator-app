@@ -42,6 +42,41 @@ struct HarnessAdapterTests {
   }
 }
 
+struct BuildMetadataTests {
+  @Test func xcodeProjectIncludesEveryOperatorSwiftSource() throws {
+    let repositoryRoot =
+      URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let sourcesRoot = repositoryRoot.appendingPathComponent("Sources/Operator")
+    let projectFile = repositoryRoot.appendingPathComponent("Operator.xcodeproj/project.pbxproj")
+    let project = try String(contentsOf: projectFile, encoding: .utf8)
+    let sourceURLs =
+      try #require(
+        FileManager.default.enumerator(
+          at: sourcesRoot,
+          includingPropertiesForKeys: [.isRegularFileKey],
+          options: [.skipsHiddenFiles]
+        )?.compactMap { $0 as? URL }
+          .filter { $0.pathExtension == "swift" }
+      )
+
+    for sourceURL in sourceURLs {
+      let relativePath = String(sourceURL.path.dropFirst(sourcesRoot.path.count + 1))
+      let buildFileMarker = "/* \(sourceURL.lastPathComponent) in Sources */"
+      #expect(
+        project.contains("path = \(relativePath);"),
+        "Xcode file references are missing \(relativePath)"
+      )
+      #expect(
+        project.components(separatedBy: buildFileMarker).count >= 3,
+        "Xcode Sources build phase is missing \(relativePath)"
+      )
+    }
+  }
+}
+
 @MainActor
 struct ProjectRuntimeTests {
   @Test func switchingProjectsPreservesIndependentLiveSessionGrids() throws {
