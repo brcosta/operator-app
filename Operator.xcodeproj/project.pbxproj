@@ -39,6 +39,8 @@
 		200000000000000000000031 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 800000000000000000000001 /* SwiftTerm */; };
 		200000000000000000000032 /* cmark-gfm in Frameworks */ = {isa = PBXBuildFile; productRef = 800000000000000000000002 /* cmark-gfm */; };
 		200000000000000000000033 /* cmark-gfm-extensions in Frameworks */ = {isa = PBXBuildFile; productRef = 800000000000000000000003 /* cmark-gfm-extensions */; };
+		200000000000000000000034 /* claude-code.svg in Resources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000034 /* claude-code.svg */; };
+		200000000000000000000035 /* codex.svg in Resources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000035 /* codex.svg */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +88,8 @@
 		300000000000000000000030 /* OperatorUITests.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = OperatorUITests.xctestplan; sourceTree = "<group>"; };
 		300000000000000000000041 /* Operator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Operator.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		300000000000000000000042 /* OperatorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OperatorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		300000000000000000000034 /* claude-code.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = Resources/HarnessIcons/claude-code.svg; sourceTree = "<group>"; };
+		300000000000000000000035 /* codex.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = Resources/HarnessIcons/codex.svg; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -150,6 +154,8 @@
 				300000000000000000000019 /* ProjectManagerView.swift */,
 				30000000000000000000001A /* OperatorNotificationBridge.m */,
 				30000000000000000000001B /* OperatorNotificationBridge.h */,
+				300000000000000000000034 /* claude-code.svg */,
+				300000000000000000000035 /* codex.svg */,
 			);
 			name = Operator;
 			path = Sources/Operator;
@@ -261,7 +267,10 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		500000000000000000000021 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		500000000000000000000021 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (
+			200000000000000000000034 /* claude-code.svg in Resources */,
+			200000000000000000000035 /* codex.svg in Resources */,
+		); runOnlyForDeploymentPostprocessing = 0; };
 		500000000000000000000022 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 

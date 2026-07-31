@@ -1,6 +1,7 @@
 import AppKit
 import CoreText
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import Operator
@@ -75,38 +76,73 @@ struct TerminalPreferencesTests {
     #expect(terminal.disableFullRedrawOnAnyChanges)
   }
 
-  @Test func defaultTerminalPaletteMatchesItermDefaultProfile() {
-    let palette = TerminalColorPalette.iTermDefault
+  @Test func darkTerminalPaletteMatchesItermTangoProfile() {
+    let palette = TerminalColorPalette.iTermDark
 
     #expect(palette.background.hex == 0x000000)
-    #expect(palette.foreground.hex == 0xBBBBBB)
-    #expect(palette.cursor.hex == 0xBBBBBB)
-    #expect(palette.cursorText.hex == 0xFFFFFF)
+    #expect(palette.foreground.hex == 0xDEDEDE)
+    #expect(palette.cursor.hex == 0xFFFFFF)
+    #expect(palette.cursorText.hex == 0x000000)
     #expect(palette.selectionBackground.hex == 0xB5D5FF)
     #expect(
       palette.ansiColors.map(\.hex) == [
-        0x000000, 0xBB0000, 0x00BB00, 0xBBBB00,
-        0x0000BB, 0xBB00BB, 0x00BBBB, 0xBBBBBB,
-        0x555555, 0xFF5555, 0x55FF55, 0xFFFF55,
-        0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
+        0x000000, 0xCC0000, 0x4E9A06, 0xC4A000,
+        0x3465A4, 0x75507B, 0x06989A, 0xD3D7CF,
+        0x555753, 0xEF2929, 0x8AE234, 0xFCE94F,
+        0x729FCF, 0xAD7FA8, 0x34E2E2, 0xEEEEEC,
       ])
   }
 
+  @Test func lightTerminalPaletteKeepsColoredOutputReadable() {
+    let palette = TerminalColorPalette.paperLight
+
+    #expect(palette.background.hex == 0xFFFDF8)
+    #expect(palette.foreground.hex == 0x24292F)
+    #expect(palette.cursor.hex == 0x0969DA)
+    #expect(palette.cursorText.hex == 0xFFFFFF)
+    #expect(palette.selectionBackground.hex == 0xB6D7FF)
+    #expect(
+      palette.ansiColors.map(\.hex) == [
+        0x24292F, 0xCF222E, 0x1A7F37, 0x9A6700,
+        0x0969DA, 0x8250DF, 0x1B7C83, 0x57606A,
+        0x6E7781, 0xA40E26, 0x116329, 0x7D4E00,
+        0x0550AE, 0x6639BA, 0x0A6A75, 0xFFFFFF,
+      ])
+  }
+
+  @Test func terminalPaletteFollowsTheInterfaceColorScheme() {
+    #expect(TerminalColorPalette.default(for: .dark) == .iTermDark)
+    #expect(TerminalColorPalette.default(for: .light) == .paperLight)
+  }
+
   @MainActor
-  @Test func terminalAppliesDefaultPaletteWithoutReapplyingItOnPreferenceChanges() throws {
+  @Test func terminalAppliesPaletteWithoutReapplyingItOnPreferenceChanges() throws {
     let terminal = OperatorTerminalView(frame: .init(x: 0, y: 0, width: 640, height: 480))
 
-    terminal.apply(.default)
+    terminal.apply(.default, palette: .iTermDark)
     let palette = try #require(terminal.appliedColorPalette)
     terminal.nativeBackgroundColor = TerminalRGB(hex: 0x123456).appKitColor
-    terminal.apply(TerminalPreferences(fontSize: 15))
+    terminal.apply(TerminalPreferences(fontSize: 15), palette: .iTermDark)
 
-    #expect(palette == .iTermDefault)
+    #expect(palette == .iTermDark)
     #expect(rgbHex(of: terminal.nativeForegroundColor) == palette.foreground.hex)
     #expect(rgbHex(of: terminal.caretColor) == palette.cursor.hex)
     #expect(rgbHex(of: terminal.caretTextColor) == palette.cursorText.hex)
     #expect(rgbHex(of: terminal.selectedTextBackgroundColor) == palette.selectionBackground.hex)
     #expect(rgbHex(of: terminal.nativeBackgroundColor) == 0x123456)
+  }
+
+  @MainActor
+  @Test func terminalRecolorsAnExistingSessionWhenAppearanceChanges() throws {
+    let terminal = OperatorTerminalView(frame: .init(x: 0, y: 0, width: 640, height: 480))
+
+    terminal.apply(.default, palette: .iTermDark)
+    terminal.apply(.default, palette: .paperLight)
+
+    #expect(terminal.appliedColorPalette == .paperLight)
+    #expect(rgbHex(of: terminal.nativeBackgroundColor) == 0xFFFDF8)
+    #expect(rgbHex(of: terminal.nativeForegroundColor) == 0x24292F)
+    #expect(rgbHex(of: terminal.caretColor) == 0x0969DA)
   }
 
   @Test func focusIntentSurvivesMountingUntilFirstResponderDeliverySucceeds() {

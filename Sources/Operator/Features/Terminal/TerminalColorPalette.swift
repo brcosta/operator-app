@@ -1,5 +1,6 @@
 import AppKit
 import SwiftTerm
+import SwiftUI
 
 struct TerminalRGB: Equatable, Sendable {
   let red: UInt8
@@ -40,32 +41,46 @@ struct TerminalColorPalette: Equatable, Sendable {
   let selectionBackground: TerminalRGB
   let ansiColors: [TerminalRGB]
 
-  /// The stock iTerm2 "Default" profile. Keeping the terminal profile independent from
-  /// Operator's window appearance also prevents app theme changes from recoloring live sessions.
-  static let iTermDefault = TerminalColorPalette(
+  /// The iTerm2 Tango profile used as Operator's dark terminal default.
+  static let iTermDark = TerminalColorPalette(
     background: TerminalRGB(hex: 0x000000),
-    foreground: TerminalRGB(hex: 0xBBBBBB),
-    cursor: TerminalRGB(hex: 0xBBBBBB),
-    cursorText: TerminalRGB(hex: 0xFFFFFF),
+    foreground: TerminalRGB(hex: 0xDEDEDE),
+    cursor: TerminalRGB(hex: 0xFFFFFF),
+    cursorText: TerminalRGB(hex: 0x000000),
     selectionBackground: TerminalRGB(hex: 0xB5D5FF),
     ansiColors: [
-      TerminalRGB(hex: 0x000000),
-      TerminalRGB(hex: 0xBB0000),
-      TerminalRGB(hex: 0x00BB00),
-      TerminalRGB(hex: 0xBBBB00),
-      TerminalRGB(hex: 0x0000BB),
-      TerminalRGB(hex: 0xBB00BB),
-      TerminalRGB(hex: 0x00BBBB),
-      TerminalRGB(hex: 0xBBBBBB),
-      TerminalRGB(hex: 0x555555),
-      TerminalRGB(hex: 0xFF5555),
-      TerminalRGB(hex: 0x55FF55),
-      TerminalRGB(hex: 0xFFFF55),
-      TerminalRGB(hex: 0x5555FF),
-      TerminalRGB(hex: 0xFF55FF),
-      TerminalRGB(hex: 0x55FFFF),
-      TerminalRGB(hex: 0xFFFFFF),
+      TerminalRGB(hex: 0x000000), TerminalRGB(hex: 0xCC0000),
+      TerminalRGB(hex: 0x4E9A06), TerminalRGB(hex: 0xC4A000),
+      TerminalRGB(hex: 0x3465A4), TerminalRGB(hex: 0x75507B),
+      TerminalRGB(hex: 0x06989A), TerminalRGB(hex: 0xD3D7CF),
+      TerminalRGB(hex: 0x555753), TerminalRGB(hex: 0xEF2929),
+      TerminalRGB(hex: 0x8AE234), TerminalRGB(hex: 0xFCE94F),
+      TerminalRGB(hex: 0x729FCF), TerminalRGB(hex: 0xAD7FA8),
+      TerminalRGB(hex: 0x34E2E2), TerminalRGB(hex: 0xEEEEEC),
     ])
+
+  /// A light, high-contrast companion palette. Every colored ANSI value has sufficient
+  /// contrast against the warm paper background for command output and diagnostics.
+  static let paperLight = TerminalColorPalette(
+    background: TerminalRGB(hex: 0xFFFDF8),
+    foreground: TerminalRGB(hex: 0x24292F),
+    cursor: TerminalRGB(hex: 0x0969DA),
+    cursorText: TerminalRGB(hex: 0xFFFFFF),
+    selectionBackground: TerminalRGB(hex: 0xB6D7FF),
+    ansiColors: [
+      TerminalRGB(hex: 0x24292F), TerminalRGB(hex: 0xCF222E),
+      TerminalRGB(hex: 0x1A7F37), TerminalRGB(hex: 0x9A6700),
+      TerminalRGB(hex: 0x0969DA), TerminalRGB(hex: 0x8250DF),
+      TerminalRGB(hex: 0x1B7C83), TerminalRGB(hex: 0x57606A),
+      TerminalRGB(hex: 0x6E7781), TerminalRGB(hex: 0xA40E26),
+      TerminalRGB(hex: 0x116329), TerminalRGB(hex: 0x7D4E00),
+      TerminalRGB(hex: 0x0550AE), TerminalRGB(hex: 0x6639BA),
+      TerminalRGB(hex: 0x0A6A75), TerminalRGB(hex: 0xFFFFFF),
+    ])
+
+  static func `default`(for colorScheme: ColorScheme) -> TerminalColorPalette {
+    colorScheme == .dark ? iTermDark : paperLight
+  }
 
   @MainActor
   func apply(to terminal: LocalProcessTerminalView) {
