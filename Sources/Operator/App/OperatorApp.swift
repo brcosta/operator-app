@@ -71,6 +71,7 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
       await OperatorNotifications.authorizationState()
     }
     applyAppearance(store.state.appearance)
+    configureDockIcon()
     configureMainMenu()
     mainMenuCancellable = store.$state
       .receive(on: RunLoop.main)
@@ -186,6 +187,24 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     OperatorDebugLog.record(
       "appearance.applied", "Applied application appearance",
       level: .info, metadata: ["appearance": preference.rawValue])
+  }
+
+  private func configureDockIcon() {
+    guard let icon = NSApp.applicationIconImage, icon.size.width > 0, icon.size.height > 0 else {
+      return
+    }
+
+    let dockIcon = NSImage(size: icon.size)
+    dockIcon.lockFocus()
+    let bounds = NSRect(origin: .zero, size: icon.size)
+    let inset = min(bounds.width, bounds.height) * 0.06
+    let plate = bounds.insetBy(dx: inset, dy: inset)
+    let radius = min(plate.width, plate.height) * 0.22
+    NSColor(calibratedWhite: 0.94, alpha: 1).setFill()
+    NSBezierPath(roundedRect: plate, xRadius: radius, yRadius: radius).fill()
+    icon.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1)
+    dockIcon.unlockFocus()
+    NSApp.applicationIconImage = dockIcon
   }
 
   private func scheduleAppSmokeTest() {
