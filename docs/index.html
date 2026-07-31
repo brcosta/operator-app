@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Operator is the local-first, open-source command center for AI-assisted development on macOS.">
+    <meta name="theme-color" content="#080b17">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Operator — Your AI coding work, under control.">
+    <meta property="og:description" content="A local-first, open-source macOS command center for coding agents, shells, repositories, and decisions.">
+    <meta property="og:url" content="https://brcosta.github.io/operator-app/">
+    <meta property="og:image" content="https://brcosta.github.io/operator-app/assets/operator-workspaces.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Operator — Your AI coding work, under control.">
+    <meta name="twitter:description" content="A local-first, open-source macOS command center for coding agents, shells, repositories, and decisions.">
+    <meta name="twitter:image" content="https://brcosta.github.io/operator-app/assets/operator-workspaces.png">
+    <link rel="stylesheet" href="styles.css">
+    <title>Operator — Your AI coding work, under control.</title>
+  </head>
+  <body>
+    <div class="page-glow glow-one"></div>
+    <div class="page-glow glow-two"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Operator home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Operator</span>
+      </a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+        <span class="sr-only">Toggle navigation</span>
+        <span></span><span></span>
+      </button>
+      <nav id="site-nav" class="site-nav" aria-label="Main navigation">
+        <a href="#workflow">How it works</a>
+        <a href="#tinker">Tinker with it</a>
+        <a href="#local">Local-first</a>
+        <a class="nav-source" href="https://github.com/brcosta/operator-app">View source <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero section-shell">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="live-dot"></span> Open source · Apache 2.0</p>
+          <h1>Your AI coding work,<br><em>under control.</em></h1>
+          <p class="hero-lede">Operator turns scattered terminals, coding agents, repositories, and decisions into one calm, native macOS workspace.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#get-started">Run it from source <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="https://github.com/brcosta/operator-app">Explore the code <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="hero-proof" aria-label="Operator principles">
+            <span><b>01</b> Local-first</span>
+            <span><b>02</b> Native macOS</span>
+            <span><b>03</b> Built to tinker</span>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="visual-orbit orbit-one"></div>
+          <div class="visual-orbit orbit-two"></div>
+          <div class="window-card">
+            <div class="window-topbar"><span></span><span></span><span></span><b>operator / workspace</b></div>
+            <img src="assets/operator-workspaces.png" alt="Operator workspace showing project sessions and terminal split panes">
+          </div>
+          <div class="floating-status status-progress"><span class="status-icon">⌁</span><span><b>Agent activity</b><small>Reviewing changes</small></span><i></i></div>
+          <div class="floating-status status-local"><span class="secure-dot"></span><span><b>Local session</b><small>No cloud required</small></span></div>
+        </div>
+      </section>
+
+      <section class="signal-bar">
+        <div><span class="signal-symbol">⌘</span> Harnesses and shells</div>
+        <div><span class="signal-symbol">⌁</span> Supervised, not hidden</div>
+        <div><span class="signal-symbol">◫</span> Git visibility, read-only</div>
+        <div><span class="signal-symbol">✦</span> Yours to modify</div>
+      </section>
+
+      <section id="workflow" class="section-shell workflow-section">
+        <div class="section-heading">
+          <p class="eyebrow">One workspace, five moves</p>
+          <h2>From terminal sprawl<br>to a clear next step.</h2>
+          <p>Operator makes async work legible without standing between you and the terminal.</p>
+        </div>
+        <ol class="workflow-grid">
+          <li><span class="step-number">01</span><h3>Collect the context</h3><p>Group repositories, worktrees, and sessions into a project that means something.</p></li>
+          <li><span class="step-number">02</span><h3>Launch the work</h3><p>Start Codex, Claude, a shell, or your own command from one palette.</p></li>
+          <li><span class="step-number">03</span><h3>See the signal</h3><p>Follow activity, task briefs, questions, artifacts, and live file changes.</p></li>
+          <li><span class="step-number">04</span><h3>Review in place</h3><p>Open Markdown, inspect diffs, and understand Git status without tab-hopping.</p></li>
+          <li><span class="step-number">05</span><h3>Resume with intent</h3><p>Bring back the right context later—without surprise command execution.</p></li>
+        </ol>
+      </section>
+
+      <section class="feature-band">
+        <div class="section-shell feature-layout">
+          <div class="feature-sticky">
+            <p class="eyebrow">Built for the moments between prompts</p>
+            <h2>Agents are useful.<br>Context is everything.</h2>
+            <p>When several tasks run at once, the hard part is not starting another process. It is knowing what is happening, where it belongs, and what needs you next.</p>
+          </div>
+          <div class="feature-list">
+            <article>
+              <span class="feature-icon">⌁</span>
+              <div><h3>Supervise without hovering</h3><p>Persistent task briefs, pane-routed questions, progress events, artifacts, and optional native notifications make the important moments visible.</p></div>
+            </article>
+            <article>
+              <span class="feature-icon">▧</span>
+              <div><h3>Review while work runs</h3><p>See branch health, changed files, rendered plans, and native diffs side by side with the work that produced them.</p></div>
+            </article>
+            <article>
+              <span class="feature-icon">↺</span>
+              <div><h3>Keep continuity, skip the surprises</h3><p>Managed harness identities and interactive shells can restore safely. Arbitrary one-shot commands stay manual.</p></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="tinker" class="section-shell tinker-section">
+        <div class="tinker-copy">
+          <p class="eyebrow"><span class="spark">✦</span> Made to be read, changed, and shared</p>
+          <h2>Not a black box.<br>A good starting point.</h2>
+          <p>Operator is fully open source under Apache 2.0. It is one approachable SwiftPM macOS package, with the interesting parts where you can find them—no account system, cloud backend, or hidden orchestration layer required.</p>
+          <a class="inline-link" href="https://github.com/brcosta/operator-app/blob/main/ARCHITECTURE.md">Read the architecture <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="code-map" aria-label="Operator source map">
+          <div class="code-map-top"><span></span><span></span><span></span><b>operator-app</b></div>
+          <div class="tree-row tree-folder"><span>⌄</span><b>Sources/Operator</b><em>the app</em></div>
+          <div class="tree-row tree-indent"><span>├</span><b>Features/Workspace</b><em>tabs, panes, palette</em></div>
+          <div class="tree-row tree-indent"><span>├</span><b>Features/Terminal</b><em>sessions, layouts</em></div>
+          <div class="tree-row tree-indent"><span>├</span><b>Features/Activity</b><em>briefs, questions</em></div>
+          <div class="tree-row tree-indent"><span>├</span><b>Features/Git</b><em>status, diffs</em></div>
+          <div class="tree-row tree-indent"><span>├</span><b>Services</b><em>state, integration</em></div>
+          <div class="tree-row tree-folder"><span>⌄</span><b>Tests/OperatorTests</b><em>behavior examples</em></div>
+          <div class="code-prompt"><span>›</span> Make it yours<span class="cursor"></span></div>
+        </div>
+      </section>
+
+      <section class="build-strip">
+        <div class="section-shell build-grid">
+          <p class="eyebrow">Start small. Change something real.</p>
+          <div><h2>Good first tinkers</h2><p>Add a command-palette action. Tune the terminal palette. Teach Operator about another CLI harness. Improve a restoration rule and pin it down with a test.</p></div>
+          <a class="button button-outline" href="https://github.com/brcosta/operator-app/tree/main/Tests">Browse the tests <span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+
+      <section id="local" class="section-shell local-section">
+        <div class="section-heading centered">
+          <p class="eyebrow">Your work stays yours</p>
+          <h2>Local-first by design.</h2>
+          <p>Operator is designed to be useful without becoming another place your work has to pass through.</p>
+        </div>
+        <div class="principles-grid">
+          <article><span>◎</span><h3>No hosted control plane</h3><p>Run the app locally. There is no service to provision and no prompt ingestion pipeline.</p></article>
+          <article><span>◫</span><h3>Read-only Git insight</h3><p>Understand a worktree without inviting accidental staging, discarding, committing, or pushing.</p></article>
+          <article><span>⟐</span><h3>Scoped local integration</h3><p>The terminal helper authenticates each session independently before routing events or artifacts.</p></article>
+          <article><span>◌</span><h3>Redacted, bounded state</h3><p>Project metadata can persist. Terminal contents, prompts, and credential-like values do not.</p></article>
+        </div>
+        <p class="security-link"><a href="https://github.com/brcosta/operator-app/blob/main/SECURITY.md">Read the security model <span aria-hidden="true">→</span></a></p>
+      </section>
+
+      <section id="get-started" class="section-shell start-section">
+        <div class="start-panel">
+          <div>
+            <p class="eyebrow">Open source. Native. Ready when you are.</p>
+            <h2>Run Operator.<br>Then make it yours.</h2>
+            <p>macOS 14+ and a Swift 6-compatible toolchain are all you need to get started.</p>
+            <div class="hero-actions"><a class="button button-primary" href="https://github.com/brcosta/operator-app">View on GitHub <span aria-hidden="true">↗</span></a><a class="button button-quiet" href="https://github.com/brcosta/operator-app/releases">Release notes <span aria-hidden="true">↗</span></a></div>
+          </div>
+          <pre aria-label="Commands to run Operator from source"><code><span class="code-dim">$</span> git clone https://github.com/brcosta/operator-app.git
+<span class="code-dim">$</span> cd operator-app
+<span class="code-dim">$</span> swift run Operator
+
+<span class="code-success">✓</span> Native workspace ready</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer section-shell">
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Operator</span></a>
+      <p>Fully open source under <a href="https://github.com/brcosta/operator-app/blob/main/LICENSE">Apache 2.0</a>.</p>
+      <div><a href="https://github.com/brcosta/operator-app">GitHub</a><a href="https://github.com/brcosta/operator-app/issues">Issues</a><a href="https://github.com/brcosta/operator-app/blob/main/SECURITY.md">Security</a></div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
