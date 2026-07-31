@@ -107,6 +107,7 @@ extension View {
 enum OperatorSettingsSection: String, CaseIterable, Identifiable {
   case general
   case terminal
+  case colors
   case integrations
   case shortcuts
   case data
@@ -117,6 +118,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
     switch self {
     case .general: "General"
     case .terminal: "Terminal"
+    case .colors: "Terminal Colors"
     case .integrations: "Privacy & Integrations"
     case .shortcuts: "Shortcuts"
     case .data: "Data & Diagnostics"
@@ -127,6 +129,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
     switch self {
     case .general: "Appearance and workspace layout"
     case .terminal: "Typography, ligatures, and history"
+    case .colors: "Dark palette and iTerm2 import"
     case .integrations: "Control optional harness and file integrations"
     case .shortcuts: "Keyboard commands for daily actions"
     case .data: "Configuration, backups, and support"
@@ -137,6 +140,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
     switch self {
     case .general: "slider.horizontal.3"
     case .terminal: "terminal"
+    case .colors: "paintpalette"
     case .integrations: "hand.raised"
     case .shortcuts: "keyboard"
     case .data: "externaldrive"
@@ -250,6 +254,8 @@ struct ShortcutSettingsView: View {
       generalPage
     case .terminal:
       terminalPage
+    case .colors:
+      colorsPage
     case .integrations:
       integrationsPage
     case .shortcuts:
@@ -374,6 +380,75 @@ struct ShortcutSettingsView: View {
             .accessibilityIdentifier("operator.settings.terminalScrollback")
           }
         }
+      }
+    }
+  }
+
+  private var colorsPage: some View {
+    SettingsPage(
+      title: OperatorSettingsSection.colors.title,
+      subtitle: "Customize the dark terminal palette. Changes apply to every open dark-mode terminal."
+    ) {
+      GroupBox("Core colors") {
+        VStack(spacing: 0) {
+          SettingsControlRow(title: "Background", detail: "Terminal canvas behind command output.") {
+            ColorPicker("Background", selection: terminalColorBinding(\.background))
+              .labelsHidden()
+          }
+          Divider()
+          SettingsControlRow(title: "Foreground", detail: "Default prompt and output text.") {
+            ColorPicker("Foreground", selection: terminalColorBinding(\.foreground))
+              .labelsHidden()
+          }
+          Divider()
+          SettingsControlRow(title: "Cursor", detail: "Caret and selected text contrast.") {
+            ColorPicker("Cursor", selection: terminalColorBinding(\.cursor))
+              .labelsHidden()
+          }
+          Divider()
+          SettingsControlRow(title: "Selection", detail: "Background used for selected terminal text.") {
+            ColorPicker("Selection", selection: terminalColorBinding(\.selectionBackground))
+              .labelsHidden()
+          }
+        }
+      }
+      GroupBox("ANSI colors") {
+        Grid(horizontalSpacing: 18, verticalSpacing: 10) {
+          GridRow {
+            Text("Color").foregroundStyle(.secondary)
+            Text("Normal").foregroundStyle(.secondary)
+            Text("Bright").foregroundStyle(.secondary)
+          }
+          .font(.caption.weight(.semibold))
+          ForEach(Array(ansiColorNames.enumerated()), id: \.offset) { index, name in
+            GridRow {
+              Text(name).font(.callout)
+              ColorPicker("\(name) normal", selection: ansiColorBinding(index))
+                .labelsHidden()
+              ColorPicker("\(name) bright", selection: ansiColorBinding(index + 8))
+                .labelsHidden()
+            }
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+      }
+      GroupBox("iTerm2") {
+        VStack(alignment: .leading, spacing: 10) {
+          Text(iTermImportDescription)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          HStack {
+            Button("Import selected iTerm2 profile") { importITermColors() }
+              .disabled(!canImportITermColors)
+              .help(iTermImportDescription)
+              .accessibilityIdentifier("operator.settings.importITermColors")
+            Button("Restore Operator default") { restoreDefaultTerminalColors() }
+              .accessibilityIdentifier("operator.settings.restoreTerminalColors")
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
       }
     }
   }
@@ -576,6 +651,66 @@ struct ShortcutSettingsView: View {
     Binding(
       get: { store.state.terminalPreferences.scrollbackLines },
       set: { value in updateTerminalPreferences { $0.scrollbackLines = value } })
+  }
+
+  private var ansiColorNames: [String] {
+    ["Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"]
+  }
+
+  private var effectiveDarkPalette: TerminalColorPalette {
+    store.state.terminalPreferences.darkColorPalette ?? .iTermDark
+  }
+
+  private var canImportITermColors: Bool {
+    if case .success = ITermProfileImporter.availability { return true }
+    return false
+  }
+
+  private var iTermImportDescription: String {
+    switch ITermProfileImporter.availability {
+    case .success(let name): "Import colors from iTerm2’s selected profile: \(name)."
+    case .failure(let error): error.localizedDescription
+    }
+  }
+
+  private func terminalColorBinding(
+    _ keyPath: WritableKeyPath<TerminalColorPalette, TerminalRGB>
+  ) -> Binding<Color> {
+    Binding(
+      get: { effectiveDarkPalette[keyPath: keyPath].swiftUIColor },
+      set: { color in
+        updateDarkTerminalPalette { $0[keyPath: keyPath] = TerminalRGB(color: color) }
+      })
+  }
+
+  private func ansiColorBinding(_ index: Int) -> Binding<Color> {
+    Binding(
+      get: { effectiveDarkPalette.ansiColors[index].swiftUIColor },
+      set: { color in
+        updateDarkTerminalPalette { palette in
+          guard palette.ansiColors.indices.contains(index) else { return }
+          palette.ansiColors[index] = TerminalRGB(color: color)
+        }
+      })
+  }
+
+  private func updateDarkTerminalPalette(_ update: (inout TerminalColorPalette) -> Void) {
+    var palette = effectiveDarkPalette
+    update(&palette)
+    updateTerminalPreferences { $0.darkColorPalette = palette }
+  }
+
+  private func importITermColors() {
+    perform("Imported the selected iTerm2 color profile.") {
+      let palette = try ITermProfileImporter.selectedPalette()
+      updateTerminalPreferences { $0.darkColorPalette = palette }
+    }
+  }
+
+  private func restoreDefaultTerminalColors() {
+    updateTerminalPreferences { $0.darkColorPalette = nil }
+    operationFailed = false
+    operationMessage = "Restored Operator’s dark terminal palette."
   }
 
   private func updateTerminalPreferences(_ update: (inout TerminalPreferences) -> Void) {

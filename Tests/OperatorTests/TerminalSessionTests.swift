@@ -30,6 +30,21 @@ struct TerminalSessionTests {
     #expect(session.launchEnvironment["LC_ALL"] == "en_US.UTF-8")
   }
 
+  @Test func codexUsesClaudeCompatibleLegacyKeyboardHandlingOnlyInsideItsSession() {
+    let codex = TerminalSession(
+      request: LaunchRequest(
+        title: "Codex", command: "codex", directory: "/tmp",
+        environment: ["CODEX_TUI_DISABLE_KEYBOARD_ENHANCEMENT": "0"], harness: .codex),
+      onFinish: { _, _, _ in }, onFilesChanged: { _, _ in })
+    let claude = TerminalSession(
+      request: LaunchRequest(
+        title: "Claude", command: "claude", directory: "/tmp", harness: .claudeCode),
+      onFinish: { _, _, _ in }, onFilesChanged: { _, _ in })
+
+    #expect(codex.launchEnvironment["CODEX_TUI_DISABLE_KEYBOARD_ENHANCEMENT"] == "1")
+    #expect(claude.launchEnvironment["CODEX_TUI_DISABLE_KEYBOARD_ENHANCEMENT"] == nil)
+  }
+
   @Test func exitCallbackRecordsSuccessfulAndFailedTerminalOutcomesOnce() {
     var successful: (UUID, Int32, Bool)?
     let success = TerminalSession(

@@ -443,6 +443,31 @@ struct WorkspaceControllerTests {
     #expect(store.state.projectTabs.values.flatMap { $0 }.contains(where: { $0.id == splitTabID }))
   }
 
+  @Test func tabAndProjectNavigationInvalidatesCodexPanelHosts() throws {
+    let root = try TestSupport.temporaryDirectory()
+    let secondDirectory = root.appendingPathComponent("second")
+    try FileManager.default.createDirectory(at: secondDirectory, withIntermediateDirectories: true)
+    defer { TestSupport.remove(root) }
+    let store = StateStore(fileURL: root.appendingPathComponent("state.json"))
+    store.addProject(name: "First", directory: root.path)
+    let firstProject = try #require(store.state.projects.first)
+    store.addProject(name: "Second", directory: secondDirectory.path)
+    let secondProject = try #require(store.state.projects.last)
+    let controller = WorkspaceController(store: store)
+
+    controller.selectProject(firstProject.id)
+    controller.launchHarnessForTesting(.codex)
+    let firstTabID = try #require(controller.selectedTabID)
+    let afterLaunch = controller.codexPanelRefreshRevision
+
+    controller.selectTab(firstTabID)
+    #expect(controller.codexPanelRefreshRevision > afterLaunch)
+    let afterTabSwitch = controller.codexPanelRefreshRevision
+
+    controller.selectProject(secondProject.id)
+    #expect(controller.codexPanelRefreshRevision > afterTabSwitch)
+  }
+
   @Test func switchingProjectsRestoresTheSelectedTabsCompleteSplitTree() throws {
     let root = try TestSupport.temporaryDirectory()
     let secondDirectory = root.appendingPathComponent("second")
@@ -990,6 +1015,29 @@ struct WorkspaceControllerTests {
     #expect(controller.questions.contains(question))
   }
 
+  @Test func selectingSplitTabFocusesThePaneWithAnUnansweredQuestion() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    store.addProject(name: "Split questions", directory: directory.path)
+    let controller = WorkspaceController(store: store)
+
+    controller.launchHarnessForTesting(.codex)
+    let first = try #require(controller.sessions.first)
+    controller.splitFocusedTerminal(.horizontal)
+    let emptyPane = try #require(controller.terminalLayout?.emptyPaneIDs.first)
+    controller.launchHarnessForTesting(.claudeCode, intoPane: emptyPane)
+    let second = try #require(controller.sessions.last)
+    let tabID = try #require(controller.selectedTabID)
+
+    controller.selectTerminal(first.id)
+    controller.enqueueQuestion(sessionID: second.id, message: "Trust this directory?")
+    controller.selectTab(tabID)
+
+    #expect(controller.selectedSessionID == second.id)
+    #expect(controller.selectedPaneID == second.id)
+  }
+
   @Test func managedResumeRejectsMissingWorkspaceDirectory() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
@@ -1084,7 +1132,8 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Project", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.openMarkdown(markdown.path)
+    // Markdown files opened from the file browser go straight to the rendered viewer.
+    controller.openFile(markdown.path)
     #expect(controller.tabs.count == 1)
     #expect(controller.tabs.first?.contentKind == .markdown)
     #expect(controller.tabs.first?.layout.firstMarkdownPane?.path == markdown.path)
@@ -1177,5 +1226,28 @@ struct WorkspaceControllerTests {
     #expect(controller.terminalLayout?.contains(controller.sessions[0].id) == true)
     controller.close(controller.sessions[0])
     #expect(controller.terminalLayout == nil)
+  }
+
+  @Test func closingATabRemovesAllSplitPanesAndTheirSessions() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    store.addProject(name: "Close Tab", directory: directory.path)
+    let controller = WorkspaceController(store: store)
+
+    controller.launchHarnessForTesting(.codex)
+    controller.splitFocusedTerminal(.horizontal)
+    let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
+    controller.launchHarnessForTesting(.claudeCode, intoPane: emptyPaneID)
+    let tabID = try #require(controller.selectedTabID)
+    #expect(controller.sessions.count == 2)
+    #expect(controller.terminalLayout?.isSplit == true)
+
+    controller.closeTab(tabID)
+
+    #expect(controller.tabs.isEmpty)
+    #expect(controller.sessions.isEmpty)
+    #expect(controller.terminalLayout == nil)
+    #expect(controller.selectedTabID == nil)
   }
 }

@@ -734,11 +734,11 @@ struct ProjectFileNavigator: View {
           .foregroundStyle(.tint)
         VStack(alignment: .leading, spacing: 1) {
           Text(URL(fileURLWithPath: currentRoot).lastPathComponent)
-            .font(.callout.weight(.semibold))
+            .font(.body.weight(.semibold))
             .lineLimit(1)
           if !changes.isEmpty {
             Text("\(Set(changes.map(\.path)).count) changed")
-              .font(.caption2)
+              .font(.callout)
               .foregroundStyle(.orange)
           }
         }
@@ -820,11 +820,11 @@ struct ProjectFileNavigator: View {
                   } label: {
                     HStack(spacing: 6) {
                       Text(gitLabel(change))
-                        .font(.caption2.bold())
+                        .font(.callout.bold())
                         .foregroundStyle(gitColor(change))
                         .frame(width: 14)
                       Text(change.path)
-                        .font(.caption)
+                        .font(.callout)
                         .lineLimit(1)
                         .truncationMode(.middle)
                       Spacer()
@@ -845,7 +845,7 @@ struct ProjectFileNavigator: View {
                 }
               } label: {
                 Label("Changes", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
-                  .font(.caption.weight(.semibold))
+                  .font(.callout.weight(.semibold))
                   .foregroundStyle(.secondary)
               }
               Divider().padding(.vertical, 5)
@@ -853,7 +853,7 @@ struct ProjectFileNavigator: View {
             ForEach(visibleNodes) { node in
               ProjectFileTreeNodeView(
                 node: node, root: repositoryRoot ?? currentRoot, changes: changes,
-                openFile: openFile)
+                openFile: openFile, depth: 0)
             }
           }
           .padding(.horizontal, 7)
@@ -975,49 +975,73 @@ private struct ProjectFileTreeNodeView: View {
   let root: String
   let changes: [GitChangedFile]
   let openFile: (String) -> Void
+  let depth: Int
   @State private var isExpanded = false
 
   var body: some View {
-    if node.isDirectory {
-      DisclosureGroup(isExpanded: $isExpanded) {
-        if let children = node.children {
+    VStack(alignment: .leading, spacing: 1) {
+      if node.isDirectory {
+        Button {
+          withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() }
+        } label: {
+          nodeRow
+        }
+        .buttonStyle(.plain)
+        .contextMenu { revealButton }
+        if isExpanded, let children = node.children {
           ForEach(children) { child in
             ProjectFileTreeNodeView(
-              node: child, root: root, changes: changes, openFile: openFile)
+              node: child, root: root, changes: changes, openFile: openFile,
+              depth: depth + 1)
           }
         }
-      } label: {
-        nodeLabel
+      } else {
+        Button {
+          openFile(node.path)
+        } label: {
+          nodeRow
+        }
+        .buttonStyle(.plain)
+        .contextMenu { revealButton }
       }
-      .contextMenu { revealButton }
-    } else {
-      Button {
-        openFile(node.path)
-      } label: {
-        nodeLabel
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .contextMenu { revealButton }
     }
   }
 
-  private var nodeLabel: some View {
-    HStack(spacing: 6) {
-      Image(systemName: node.isDirectory ? "folder" : fileSymbol)
-        .foregroundStyle(node.isDirectory ? Color.accentColor : Color.secondary)
-        .frame(width: 16)
-      Text(node.name)
-        .font(.caption)
-        .lineLimit(1)
-      Spacer(minLength: 4)
-      if let decoration = gitDecoration {
-        Text(decoration.label)
-          .font(.caption2.bold())
-          .foregroundStyle(decoration.color)
+  private var nodeRow: some View {
+    HStack(spacing: 0) {
+      ForEach(0..<depth, id: \.self) { _ in
+        // Preserve the readable hierarchy without drawing persistent guide rails.
+        // The extra width matches the former guide column so child rows do not jump.
+        Color.clear.frame(width: 18, height: 28)
       }
+      Group {
+        if node.isDirectory {
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .foregroundStyle(.secondary)
+        } else {
+          Color.clear
+        }
+      }
+      .frame(width: 16, height: 16)
+      HStack(spacing: 7) {
+        Image(systemName: node.isDirectory ? "folder" : fileSymbol)
+          .foregroundStyle(node.isDirectory ? Color.accentColor : Color.secondary)
+          .frame(width: 18)
+        Text(node.name)
+          .font(.callout)
+          .lineLimit(1)
+        Spacer(minLength: 4)
+        if let decoration = gitDecoration {
+          Text(decoration.label)
+            .font(.callout.bold())
+            .foregroundStyle(decoration.color)
+        }
+      }
+      .padding(.leading, 3)
     }
-    .padding(.vertical, 3)
+    .padding(.vertical, 4)
+    .padding(.trailing, 5)
+    .contentShape(Rectangle())
   }
 
   @ViewBuilder private var revealButton: some View {
@@ -1058,9 +1082,9 @@ struct ProjectFileViewer: View {
   let path: String
   let workspaceDirectory: String
   let isFocused: Bool
+  let showsFocusIndicator: Bool
   let select: () -> Void
   let close: () -> Void
-  let openMarkdown: () -> Void
   let onDeleted: () -> Void
   let fileWatchingEnabled: Bool
   @Environment(\.colorScheme) private var colorScheme
@@ -1076,11 +1100,6 @@ struct ProjectFileViewer: View {
     case source = "Source"
 
     var id: String { rawValue }
-  }
-
-  private var isMarkdown: Bool {
-    MarkdownFile.supportedExtensions.contains(
-      URL(fileURLWithPath: path).pathExtension.lowercased())
   }
 
   private var isHTML: Bool { HTMLFile.isSupported(path: path) }
@@ -1106,10 +1125,6 @@ struct ProjectFileViewer: View {
           .pickerStyle(.segmented)
           .frame(width: 180)
           .accessibilityIdentifier("operator.htmlViewer.mode")
-        }
-        if isMarkdown {
-          Button("Open as Markdown", action: openMarkdown)
-            .buttonStyle(.borderless)
         }
         Button {
           NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -1154,7 +1169,7 @@ struct ProjectFileViewer: View {
     }
     .contentShape(Rectangle())
     .onTapGesture(perform: select)
-    .paneFocusIndicator(isFocused, color: .accentColor)
+    .paneFocusIndicator(isFocused && showsFocusIndicator, color: .accentColor)
     .task(id: "\(path)#\(revision)") { await load() }
     .task(id: "\(path)#\(fileWatchingEnabled)") {
       if fileWatchingEnabled { await monitorFileChanges() }
