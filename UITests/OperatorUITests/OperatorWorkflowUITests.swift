@@ -42,6 +42,9 @@ final class OperatorWorkflowUITests: OperatorUITestCase {
     XCTAssertTrue(
       app.descendants(matching: .any)["operator.settings.appearance"].waitForExistence(timeout: 3)
     )
+    let shortcutsSection = button("operator.settings.section.shortcuts")
+    XCTAssertTrue(shortcutsSection.waitForExistence(timeout: 3))
+    shortcutsSection.click()
     XCTAssertTrue(app.staticTexts["New Session"].exists)
     XCTAssertTrue(app.staticTexts["Next Project"].exists)
     shortcutsDone.click()
