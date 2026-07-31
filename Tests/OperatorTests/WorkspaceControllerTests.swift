@@ -197,7 +197,7 @@ struct WorkspaceControllerTests {
     let workspace = try #require(project.workspaces.first)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.claudeCode)
+    controller.launchHarnessForTesting(.claudeCode)
     let claude = try #require(controller.sessions.first)
     #expect(claude.request.directory == workspace.directory)
     #expect(claude.request.projectID == project.id)
@@ -205,7 +205,7 @@ struct WorkspaceControllerTests {
     #expect(claude.request.harness == .claudeCode)
     #expect(claude.request.command.hasPrefix("claude -n "))
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let codex = try #require(controller.sessions.last)
     #expect(codex.request.harness == .codex)
     #expect(codex.request.command == "codex")
@@ -231,7 +231,7 @@ struct WorkspaceControllerTests {
     let controller = WorkspaceController(store: store)
 
     controller.selectProject(first.id)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let firstSession = try #require(controller.sessions.first)
 
     controller.launch(
@@ -261,7 +261,7 @@ struct WorkspaceControllerTests {
     let store = StateStore(fileURL: root.appendingPathComponent("state.json"))
     let firstID = store.addProject(name: "First", directory: root.path)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     #expect(!controller.sessions.isEmpty)
 
     let newProjectID = store.addProject(name: "New", directory: newDirectory.path)
@@ -280,7 +280,7 @@ struct WorkspaceControllerTests {
     let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
     store.addProject(name: "Empty Again", directory: directory.path)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let session = try #require(controller.sessions.first)
 
     controller.close(session)
@@ -297,7 +297,7 @@ struct WorkspaceControllerTests {
     let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
     store.addProject(name: "Split Cleanup", directory: directory.path)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let session = try #require(controller.sessions.first)
     controller.splitFocusedTerminal(.horizontal)
     #expect(controller.terminalLayout?.emptyPaneIDs.isEmpty == false)
@@ -316,11 +316,11 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Pane Count", directory: directory.path)
     let project = try #require(store.state.projects.first)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.codex)
-    controller.launchQuickHarness(.claudeCode)
+    controller.launchHarnessForTesting(.codex)
+    controller.launchHarnessForTesting(.claudeCode)
     controller.splitFocusedTerminal(.horizontal)
     let emptyPane = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-    controller.launchQuickHarness(.codex, intoPane: emptyPane)
+    controller.launchHarnessForTesting(.codex, intoPane: emptyPane)
 
     #expect(controller.activePaneCount(for: project.id) == 3)
   }
@@ -334,7 +334,7 @@ struct WorkspaceControllerTests {
 
     let atlasID = store.addProject(name: "Atlas", directory: root.path)
     controller.selectProject(atlasID)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let atlasTabID = try #require(controller.selectedTabID)
 
     let beaconDirectory = root.appendingPathComponent("beacon", isDirectory: true)
@@ -342,7 +342,7 @@ struct WorkspaceControllerTests {
       at: beaconDirectory, withIntermediateDirectories: true)
     let beaconID = store.addProject(name: "Beacon", directory: beaconDirectory.path)
     controller.selectProject(beaconID)
-    controller.launchQuickHarness(.claudeCode)
+    controller.launchHarnessForTesting(.claudeCode)
 
     #expect(controller.renameTab(atlasTabID, inProject: atlasID, to: "  Planning  "))
     #expect(store.state.projectTabs[atlasID]?.first?.title == "Planning")
@@ -370,12 +370,12 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Activity", directory: root.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let first = try #require(controller.sessions.first)
     let tabID = try #require(controller.selectedTabID)
     controller.splitFocusedTerminal(.horizontal)
     let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-    controller.launchQuickHarness(.claudeCode, intoPane: emptyPaneID)
+    controller.launchHarnessForTesting(.claudeCode, intoPane: emptyPaneID)
     let second = try #require(controller.sessions.last)
     let tab = try #require(controller.tabs.first(where: { $0.id == tabID }))
 
@@ -419,13 +419,13 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Tabs", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let first = try #require(controller.sessions.first)
-    controller.launchQuickHarness(.claudeCode)
+    controller.launchHarnessForTesting(.claudeCode)
     let second = try #require(controller.sessions.last)
     controller.splitFocusedTerminal(.horizontal)
     let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-    controller.launchQuickHarness(.codex, intoPane: emptyPaneID)
+    controller.launchHarnessForTesting(.codex, intoPane: emptyPaneID)
     let third = try #require(controller.sessions.last)
 
     let splitTabID = try #require(controller.selectedTabID)
@@ -456,16 +456,16 @@ struct WorkspaceControllerTests {
     let controller = WorkspaceController(store: store)
 
     controller.selectProject(firstProject.id)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let firstPane = try #require(controller.selectedSessionID)
     controller.splitFocusedTerminal(.vertical)
     let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-    controller.launchQuickHarness(.claudeCode, intoPane: emptyPaneID)
+    controller.launchHarnessForTesting(.claudeCode, intoPane: emptyPaneID)
     let secondPane = try #require(controller.selectedSessionID)
     let firstTabID = try #require(controller.selectedTabID)
 
     controller.selectProject(secondProject.id)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
 
     controller.selectProject(firstProject.id)
     #expect(controller.selectedTabID == firstTabID)
@@ -523,7 +523,7 @@ struct WorkspaceControllerTests {
     let workspace = try #require(project.workspaces.first)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let firstID = try #require(controller.selectedSessionID)
     let tabID = try #require(controller.selectedTabID)
     controller.splitFocusedTerminal(.horizontal)
@@ -548,11 +548,11 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Focus", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let firstID = try #require(controller.selectedSessionID)
     controller.splitFocusedTerminal(.horizontal)
     let paneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-    controller.launchQuickHarness(.claudeCode, intoPane: paneID)
+    controller.launchHarnessForTesting(.claudeCode, intoPane: paneID)
     let secondID = try #require(controller.selectedSessionID)
 
     controller.selectTerminal(firstID)
@@ -577,7 +577,7 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Fresh Split", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     controller.splitFocusedTerminal(.horizontal)
     controller.setSplitRatio(0.16, for: "root")
     let emptyPane = try #require(controller.terminalLayout?.emptyPaneIDs.first)
@@ -594,7 +594,7 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Empty Pane", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let tabID = try #require(controller.selectedTabID)
     controller.splitFocusedTerminal(.horizontal)
     let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
@@ -616,7 +616,7 @@ struct WorkspaceControllerTests {
     let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
     store.addProject(name: "Shell", directory: directory.path)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let tabID = try #require(controller.selectedTabID)
     controller.splitFocusedTerminal(.horizontal)
     let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
@@ -820,9 +820,9 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Targeted Layout", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let issuingSessionID = try #require(controller.selectedSessionID)
-    controller.launchQuickHarness(.claudeCode)
+    controller.launchHarnessForTesting(.claudeCode)
     let visibleSessionID = try #require(controller.selectedSessionID)
 
     controller.applyLayout(command: "split-bottom", sessionID: issuingSessionID)
@@ -840,7 +840,7 @@ struct WorkspaceControllerTests {
     store.addProject(name: "Exit", directory: directory.path)
     let controller = WorkspaceController(store: store)
 
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let session = try #require(controller.selectedSession)
     session.didExit(code: 0)
 
@@ -885,7 +885,7 @@ struct WorkspaceControllerTests {
     let store = StateStore(fileURL: stateURL)
     store.addProject(name: "Claude Sync", directory: directory.path)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.claudeCode)
+    controller.launchHarnessForTesting(.claudeCode)
     let session = try #require(controller.selectedSession)
     let switchedIdentifier = "4e92e921-1454-4b5d-a62a-4c71d31b47f4"
 
@@ -908,7 +908,7 @@ struct WorkspaceControllerTests {
     let store = StateStore(fileURL: stateURL)
     store.addProject(name: "Codex Sync", directory: directory.path)
     let controller = WorkspaceController(store: store)
-    controller.launchQuickHarness(.codex)
+    controller.launchHarnessForTesting(.codex)
     let session = try #require(controller.selectedSession)
     let switchedIdentifier = "0199a213-81c0-7800-8aa1-bbab2a035a53"
 
