@@ -1627,18 +1627,24 @@ final class WorkspaceController: ObservableObject {
     switch event.kind {
     case .question:
       receiveQuestion(sessionID: event.sessionID, message: event.message ?? "Input requested")
+    case .childStarted, .childFinished, .taskFinished:
+      // A harness that has resumed work, completed a tool, or finished a turn has moved past
+      // the previous blocking prompt. This also recovers any stale state from older hook
+      // configurations that treated Claude's completion notification as a question.
+      resolveQuestions(for: event.sessionID)
+      if event.kind == .taskFinished {
+        sessionProgress[event.sessionID] = 1
+        store.setPaneAwaitingReview(true, for: event.sessionID)
+        if shouldNotify(session, for: .awaitingReview) {
+          harnessCompletionNotifiedSessions.insert(event.sessionID)
+          taskFinishedNotificationHandler(
+            session.title, event.sessionID,
+            URL(fileURLWithPath: session.request.directory).lastPathComponent, 0, false)
+        }
+      }
     case .progress:
       if let progress = event.progress, progress.isFinite {
         sessionProgress[event.sessionID] = min(1, max(0, progress))
-      }
-    case .taskFinished:
-      sessionProgress[event.sessionID] = 1
-      store.setPaneAwaitingReview(true, for: event.sessionID)
-      if shouldNotify(session, for: .awaitingReview) {
-        harnessCompletionNotifiedSessions.insert(event.sessionID)
-        taskFinishedNotificationHandler(
-          session.title, event.sessionID,
-          URL(fileURLWithPath: session.request.directory).lastPathComponent, 0, false)
       }
     case .artifact:
       guard let rawPath = event.path else { return }
@@ -1668,7 +1674,6 @@ final class WorkspaceController: ObservableObject {
         selectedArtifactID =
           artifacts.first(where: { $0.path == path && $0.sessionID == event.sessionID })?.id
       }
-    default: break
     }
     interactions.insert(
       InteractionRecord(
@@ -1831,6 +1836,18 @@ final class WorkspaceController: ObservableObject {
     questions.insert(HarnessQuestion(sessionID: sessionID, message: message), at: 0)
     questions = Array(questions.prefix(100))
     return session
+  }
+
+  private func resolveQuestions(for sessionID: UUID) {
+    let pendingIDs = Set(questions.lazy.filter { $0.sessionID == sessionID }.map(\.id))
+    guard !pendingIDs.isEmpty else { return }
+    questions.removeAll { pendingIDs.contains($0.id) }
+    for index in interactions.indices where
+      interactions[index].sessionID == sessionID && interactions[index].kind == .question
+        && interactions[index].resolvedAt == nil
+    {
+      interactions[index].resolvedAt = .now
+    }
   }
 
   func focusQuestion(_ question: HarnessQuestion) {

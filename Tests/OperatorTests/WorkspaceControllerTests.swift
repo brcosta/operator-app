@@ -1208,6 +1208,26 @@ struct WorkspaceControllerTests {
     controller.close(session)
   }
 
+  @Test func resumedOrCompletedHarnessWorkClearsStaleQuestions() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    let controller = WorkspaceController(store: store)
+    controller.launch(
+      LaunchRequest(title: "Claude", command: "claude", directory: directory.path, harness: .claudeCode))
+    let session = try #require(controller.selectedSession)
+    controller.receiveEvent(
+      HarnessEventEnvelope(
+        sessionID: session.id, kind: .question, message: "Approve this tool?"))
+    #expect(controller.questions.count == 1)
+
+    controller.receiveEvent(HarnessEventEnvelope(sessionID: session.id, kind: .childFinished))
+
+    #expect(controller.questions.isEmpty)
+    #expect(controller.interactions.first(where: { $0.kind == .question })?.resolvedAt != nil)
+    controller.close(session)
+  }
+
   @Test func duplicateRestartAndCloseKeepSessionAndLayoutStateConsistent() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
