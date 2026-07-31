@@ -48,12 +48,22 @@ struct HarnessHookIntegrationTests {
     #expect(hooks?["SessionStart"] != nil)
     #expect(hooks?["PreToolUse"] != nil)
     #expect(hooks?["Stop"] != nil)
+    let notifications = hooks?["Notification"] as? [[String: Any]]
+    #expect(notifications?.map { $0["matcher"] as? String } == [
+      "permission_prompt", "elicitation_dialog",
+    ])
     let skill = root.appendingPathComponent(
       "HarnessHooks/\(sessionID.uuidString)/operator-control.md")
     let instructions = try String(contentsOf: skill, encoding: .utf8)
     #expect(instructions == OperatorHarnessSkill.instructions)
     #expect(prepared.command.contains("--append-system-prompt-file"))
     #expect(prepared.command.contains(skill.path))
+  }
+
+  @Test func claudeCompletionNotificationsDoNotBecomeOperatorQuestions() {
+    // Claude's `idle_prompt` notification means a turn completed and it is ready for a new
+    // task. Operator deliberately only hooks blocking permission and elicitation prompts.
+    #expect(HarnessHookIntegration.event(for: "attention", harness: .claudeCode) == .question)
   }
 
   @Test func claudeHookPayloadRelaysOnlyItsValidatedSessionIdentifier() throws {

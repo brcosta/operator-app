@@ -109,7 +109,13 @@ enum HarnessHookIntegration {
       "SessionStart": hookEntries("session-start"),
       "PreToolUse": hookEntries("tool-start"),
       "PostToolUse": hookEntries("tool-finished"),
-      "Notification": hookEntries("attention"),
+      // Claude emits `idle_prompt` when a turn completes and waits for a new task. That is
+      // useful completion information, but it is not an unanswered question in Operator.
+      // Restrict attention to the two notification types that block a user decision.
+      "Notification": [
+        hookEntry("attention", matcher: "permission_prompt"),
+        hookEntry("attention", matcher: "elicitation_dialog"),
+      ],
       "Stop": hookEntries("turn-stopped"),
     ]
     return try JSONSerialization.data(withJSONObject: ["hooks": hooks], options: [.prettyPrinted])
@@ -123,11 +129,13 @@ enum HarnessHookIntegration {
   }
 
   private static func hookEntries(_ hookName: String) -> [[String: Any]] {
+    [hookEntry(hookName)]
+  }
+
+  private static func hookEntry(_ hookName: String, matcher: String = "") -> [String: Any] {
     [
-      [
-        "matcher": "",
-        "hooks": [["type": "command", "command": "operator hook claudeCode-\(hookName)"]],
-      ]
+      "matcher": matcher,
+      "hooks": [["type": "command", "command": "operator hook claudeCode-\(hookName)"]],
     ]
   }
 
