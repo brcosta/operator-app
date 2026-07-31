@@ -3,6 +3,10 @@ import Testing
 
 @testable import Operator
 
+// These tests share process-wide OperatorRuntime environment state and the
+// session credential registry. Run them serially so one fixture cannot replace
+// or tear down another fixture's Unix socket while it is under test.
+@Suite(.serialized)
 struct OperatorIntegrationTests {
   @Test func longApplicationSupportPathUsesShortPrivateRuntimeSocket() throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
