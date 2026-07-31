@@ -175,6 +175,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     deliverKeyboardFocusIfPossible()
   }
 
+  func setKeyboardInputOwner(_ isOwner: Bool) {
+    (terminalView as? OperatorTerminalView)?.setKeyboardInputOwner(isOwner)
+  }
+
   private func deliverKeyboardFocusIfPossible() {
     guard keyboardFocusIntent.isPending else { return }
     DispatchQueue.main.async { [weak self] in
@@ -224,10 +228,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   }
 
   var launchEnvironment: [String: String] {
-    TerminalEnvironmentBuilder.build(
+    var requestOverrides = request.environment
+    if request.harness == .codex {
+      // Codex otherwise enables Kitty enhanced keyboard reporting. SwiftTerm supports that
+      // protocol, but its AppKit text-input path can lose ownership when a live terminal is
+      // re-parented between tabs. Codex officially supports this session-scoped compatibility
+      // switch, which keeps its input behavior aligned with the reliable Claude/legacy path.
+      requestOverrides["CODEX_TUI_DISABLE_KEYBOARD_ENHANCEMENT"] = "1"
+    }
+    return TerminalEnvironmentBuilder.build(
       inherited: ProcessInfo.processInfo.environment,
       integration: OperatorRuntime.environment,
-      requestOverrides: request.environment,
+      requestOverrides: requestOverrides,
       sessionID: id,
       token: ipcToken)
   }
@@ -289,6 +301,9 @@ final class WorkspaceController: ObservableObject {
   @Published private(set) var lastGitBranches: [UUID: String] = [:]
   @Published private(set) var lastGitBranchesBySession: [UUID: String] = [:]
   @Published private(set) var sessionOutputActivity: [UUID: SessionOutputActivity] = [:]
+  /// Invalidates the native wrappers around Codex panes when navigation changes. The underlying
+  /// process and terminal buffer remain attached to the session; only the host lifecycle is reset.
+  @Published private(set) var codexPanelRefreshRevision = 0
   @Published private(set) var resourceEnvironment = OperatorResourceEnvironment()
   @Published var notificationPermissionPrompt: NotificationPermissionPrompt?
   @Published var deletedOpenFilePrompt: DeletedOpenFilePrompt?
@@ -478,11 +493,6 @@ final class WorkspaceController: ObservableObject {
     store.paneMetadata(for: session.id)
   }
 
-  func setPaneCheckpoint(_ checkpoint: String?, for session: TerminalSession) {
-    store.setPaneCheckpoint(checkpoint, for: session.id)
-    objectWillChange.send()
-  }
-
   func setPaneNotificationPolicy(_ policy: PaneNotificationPolicy, for session: TerminalSession) {
     store.setPaneNotificationPolicy(policy, for: session.id)
     objectWillChange.send()
@@ -605,6 +615,7 @@ final class WorkspaceController: ObservableObject {
       selectedPaneID = id
       selectedEmptyPaneID = nil
       insertIntoTab(id, title: preparedRequest.title, intoPane: paneID, tabID: tabID)
+      synchronizeKeyboardInputOwner()
       session.takeKeyboardFocus()
       OperatorDebugLog.record(
         "launch.ready",
@@ -726,6 +737,38 @@ final class WorkspaceController: ObservableObject {
     }
   }
 
+  /// Closes every pane in a tab as one explicit user action. Terminal processes are terminated
+  /// through the existing session path so recipes, activity, and resource monitoring are cleaned
+  /// up consistently before the tab itself is removed.
+  func closeTab(_ tabID: UUID) {
+    guard let originalTab = tabs.first(where: { $0.id == tabID }) else { return }
+    let sessionIDs = Array(originalTab.layout.terminalIDs)
+    for sessionID in sessionIDs {
+      if let session = session(with: sessionID) { close(session) }
+    }
+
+    guard let remainingIndex = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+    let markdownPaths = originalTab.layout.panesInDisplayOrder.compactMap { pane -> String? in
+      guard case .markdown(_, let path, _) = pane else { return nil }
+      return path
+    }
+    tabs.remove(at: remainingIndex)
+    if selectedTabID == tabID || selectedTabID.map({ id in !tabs.contains(where: { $0.id == id }) }) == true {
+      selectedTabID = tabs.last?.id
+    }
+    terminalLayout = selectedTab?.layout
+    selectedPaneID = selectedTab?.focusedPaneID ?? terminalLayout?.firstPaneID
+    selectedSessionID = selectedTab?.focusedSessionID
+    synchronizeSelectionFromFocusedPane()
+    for path in markdownPaths
+    where !tabs.contains(where: { $0.layout.markdownPane(forPath: path) != nil }) {
+      markdownDocuments.removeAll { $0.path == path }
+    }
+    persistCurrentTabs()
+    OperatorDebugLog.record(
+      "tab.close", "tab=\(shortID(tabID)) panes=\(originalTab.layout.paneIDs.count)")
+  }
+
   func dismissExitClosePrompt() {
     exitClosePromptSessionID = nil
   }
@@ -836,6 +879,7 @@ final class WorkspaceController: ObservableObject {
     selectedSessionID = selectedTab?.focusedSessionID ?? terminalLayout?.firstTerminalID
     selectedPaneID = selectedTab?.focusedPaneID ?? selectedSessionID ?? terminalLayout?.firstPaneID
     synchronizeSelectionFromFocusedPane()
+    codexPanelRefreshRevision &+= 1
     OperatorDebugLog.record(
       "project.select",
       "project=\(shortID(projectID)) tabs=\(tabs.count) selectedTab=\(shortID(selectedTabID))")
@@ -956,6 +1000,7 @@ final class WorkspaceController: ObservableObject {
     persistCurrentTabs()
     selectedMarkdownPath = nil
     refreshFocusedGitBranch()
+    synchronizeKeyboardInputOwner()
     selectedSession?.takeKeyboardFocus()
   }
 
@@ -971,14 +1016,20 @@ final class WorkspaceController: ObservableObject {
     }
     persistCurrentTabs()
     refreshFocusedGitBranch()
+    synchronizeKeyboardInputOwner()
   }
 
   func selectTab(_ tabID: UUID) {
     guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
     selectedTabID = tabID
     terminalLayout = tab.layout
-    selectedPaneID = tab.focusedPaneID ?? tab.focusedSessionID ?? tab.layout.firstPaneID
+    // A question can arrive from a non-focused pane in a split. Prefer that
+    // pane when opening the tab so the prompt is immediately answerable.
+    let questionSessionID = questions.first { tab.layout.contains($0.sessionID) }?.sessionID
+    selectedPaneID =
+      questionSessionID ?? tab.focusedPaneID ?? tab.focusedSessionID ?? tab.layout.firstPaneID
     synchronizeSelectionFromFocusedPane()
+    codexPanelRefreshRevision &+= 1
     markTabOutputRead(tabID)
     OperatorDebugLog.record(
       "tab.select",
@@ -1016,6 +1067,7 @@ final class WorkspaceController: ObservableObject {
       selectedSessionID = nil
       selectedEmptyPaneID = nil
       selectedMarkdownPath = nil
+      synchronizeKeyboardInputOwner()
       return
     }
     switch pane {
@@ -1046,6 +1098,14 @@ final class WorkspaceController: ObservableObject {
       break
     }
     selectedArtifactID = nil
+    synchronizeKeyboardInputOwner()
+  }
+
+  private func synchronizeKeyboardInputOwner() {
+    let ownerID = selectedSessionID
+    for session in allSessions {
+      session.setKeyboardInputOwner(session.id == ownerID)
+    }
   }
 
   func openFile(_ rawPath: String) {
@@ -1065,6 +1125,15 @@ final class WorkspaceController: ObservableObject {
       }
     } catch {
       alertMessage = error.localizedDescription
+      return
+    }
+
+    // Markdown is a first-class document in Operator. Route it directly to the
+    // rendered viewer instead of opening a source-file pane with a second action.
+    if MarkdownFile.supportedExtensions.contains(
+      URL(fileURLWithPath: path).pathExtension.lowercased())
+    {
+      openMarkdown(path)
       return
     }
 
@@ -1111,7 +1180,7 @@ final class WorkspaceController: ObservableObject {
 
   func recordTerminalOutput(sessionID: UUID, isVisible: Bool? = nil) {
     guard let session = session(with: sessionID) else { return }
-    // New output means the agent has resumed work after a review checkpoint.
+    // New output means the agent has resumed work after awaiting review.
     if store.paneMetadata(for: sessionID).isAwaitingReview {
       store.setPaneAwaitingReview(false, for: sessionID)
     }
@@ -1531,6 +1600,12 @@ final class WorkspaceController: ObservableObject {
       !questions.contains(where: { $0.sessionID == sessionID && $0.message == cleanMessage }),
       let session = enqueueQuestion(sessionID: sessionID, message: cleanMessage)
     else { return }
+    if selectedSessionID == sessionID {
+      // Harness question UIs can change their terminal surface immediately
+      // after emitting the event. Reassert first responder after that update.
+      session.takeKeyboardFocus()
+      DispatchQueue.main.async { [weak session] in session?.takeKeyboardFocus() }
+    }
     if shouldNotify(session, for: .needsAnswer) {
       questionNotificationHandler(session.title, sessionID, cleanMessage)
     }
@@ -1611,6 +1686,7 @@ final class WorkspaceController: ObservableObject {
     let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     session.sendInput(trimmed + "\n")
+    session.takeKeyboardFocus()
     questions.removeAll { $0.id == question.id }
     if let index = interactions.firstIndex(where: {
       $0.sessionID == question.sessionID && $0.kind == .question && $0.resolvedAt == nil
@@ -1854,6 +1930,7 @@ final class OperatorTerminalView: LocalProcessTerminalView {
   private(set) var appliedPreferences: TerminalPreferences?
   private(set) var appliedColorPalette: TerminalColorPalette?
   private var editShortcutMonitor: Any?
+  private var isKeyboardInputOwner = false
 
   override func layout() {
     super.layout()
@@ -1865,6 +1942,8 @@ final class OperatorTerminalView: LocalProcessTerminalView {
   }
 
   override func mouseDown(with event: NSEvent) {
+    setKeyboardInputOwner(true)
+    _ = takeKeyboardFocus()
     onFocus()
     super.mouseDown(with: event)
   }
@@ -1872,6 +1951,7 @@ final class OperatorTerminalView: LocalProcessTerminalView {
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     onWindowChanged()
+    restoreKeyboardFocusIfNeeded()
   }
 
   override func dataReceived(slice: ArraySlice<UInt8>) {
@@ -1888,9 +1968,56 @@ final class OperatorTerminalView: LocalProcessTerminalView {
     guard editShortcutMonitor == nil else { return }
     editShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
       [weak self] event in
-      guard let self, self.window?.firstResponder === self else { return event }
-      return self.handlesEditShortcut(event) ? nil : event
+      guard let self, let window = self.window, window.isKeyWindow else { return event }
+      if window.firstResponder === self {
+        return self.handlesEditShortcut(event) ? nil : event
+      }
+      guard self.shouldForwardFallbackKeyboardEvent(event, in: window) else { return event }
+      // Codex enables Kitty's enhanced keyboard protocol. SwiftTerm routes that protocol through
+      // `interpretKeyEvents`, which requires the terminal to be AppKit's actual first responder;
+      // invoking `keyDown` on an unfocused view works for legacy TUIs but silently drops Codex
+      // input after a tab transition.
+      guard self.takeKeyboardFocus() else {
+        OperatorDebugLog.record(
+          "terminal.focus.fallback-failed", "Could not restore terminal first responder",
+          level: .warning)
+        return event
+      }
+      OperatorDebugLog.record(
+        "terminal.focus.fallback-restored", "Restored focus before forwarding keyboard input",
+        metadata: ["enhancedKeyboard": String(!self.terminal.keyboardEnhancementFlags.isEmpty)])
+      self.keyDown(with: event)
+      return nil
     }
+  }
+
+  func setKeyboardInputOwner(_ isOwner: Bool) {
+    let becameOwner = isOwner && !isKeyboardInputOwner
+    isKeyboardInputOwner = isOwner
+    if becameOwner || (isOwner && window?.firstResponder !== self) {
+      restoreKeyboardFocusIfNeeded()
+    }
+  }
+
+  private func restoreKeyboardFocusIfNeeded() {
+    guard isKeyboardInputOwner else { return }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.isKeyboardInputOwner, let window = self.window, window.isKeyWindow,
+        window.attachedSheet == nil, window.firstResponder !== self
+      else { return }
+      _ = window.makeFirstResponder(self)
+    }
+  }
+
+  private func shouldForwardFallbackKeyboardEvent(_ event: NSEvent, in window: NSWindow) -> Bool {
+    TerminalKeyboardFallbackPolicy.shouldForward(
+      isOwner: isKeyboardInputOwner,
+      isKeyWindow: window.isKeyWindow,
+      hasAttachedSheet: window.attachedSheet != nil,
+      firstResponderIsTextInput: window.firstResponder is NSTextView
+        || window.firstResponder is NSTextField,
+      usesCommandModifier: event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(
+        .command))
   }
 
   @discardableResult
@@ -1946,27 +2073,83 @@ final class OperatorTerminalView: LocalProcessTerminalView {
   }
 }
 
+@MainActor
+final class TerminalContainerView: NSView {
+  private(set) weak var mountedTerminal: LocalProcessTerminalView?
+
+  func mount(_ terminal: LocalProcessTerminalView) {
+    guard terminal.superview !== self else {
+      mountedTerminal = terminal
+      terminal.frame = bounds
+      return
+    }
+
+    terminal.removeFromSuperview()
+    terminal.frame = bounds
+    terminal.autoresizingMask = [.width, .height]
+    addSubview(terminal)
+    mountedTerminal = terminal
+  }
+
+  /// Removes the terminal only when this container still owns it. SwiftUI can dismantle an
+  /// outgoing tab after the same persistent terminal has already mounted in the incoming tab.
+  /// An unconditional removal here would detach the newly focused terminal.
+  func unmountIfOwned(_ terminal: LocalProcessTerminalView) {
+    guard terminal.superview === self else { return }
+    terminal.removeFromSuperview()
+    if mountedTerminal === terminal {
+      mountedTerminal = nil
+    }
+  }
+
+  override func layout() {
+    super.layout()
+    mountedTerminal?.frame = bounds
+  }
+}
+
 struct TerminalHost: NSViewRepresentable {
   @ObservedObject var session: TerminalSession
   @Environment(\.colorScheme) private var colorScheme
   let preferences: TerminalPreferences
+  let shouldFocus: Bool
 
   private var colorPalette: TerminalColorPalette {
-    TerminalColorPalette.default(for: colorScheme)
+    TerminalColorPalette.resolved(for: colorScheme, preferences: preferences)
   }
 
   func makeCoordinator() -> Coordinator { Coordinator(session: session) }
 
-  @MainActor func makeNSView(context: Context) -> LocalProcessTerminalView {
+  @MainActor func makeNSView(context: Context) -> TerminalContainerView {
+    let container = TerminalContainerView(frame: .zero)
     let terminal = session.terminalView ?? makeTerminalView()
-    terminal.removeFromSuperview()
     (terminal as? OperatorTerminalView)?.apply(preferences, palette: colorPalette)
     session.attach(terminal, delegate: context.coordinator)
-    return terminal
+    container.mount(terminal)
+    (terminal as? OperatorTerminalView)?.setKeyboardInputOwner(shouldFocus)
+    // Moving a persistent terminal between split/tab containers does not always produce a
+    // window-change callback because the view remains in the same NSWindow. Explicitly retry
+    // the pending focus request after mounting so a selected Codex pane cannot remain visually
+    // active while AppKit still routes keystrokes elsewhere.
+    if shouldFocus { session.takeKeyboardFocus() }
+    return container
   }
 
-  @MainActor func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-    (nsView as? OperatorTerminalView)?.apply(preferences, palette: colorPalette)
+  @MainActor func updateNSView(_ nsView: TerminalContainerView, context: Context) {
+    let terminal = session.terminalView ?? makeTerminalView()
+    session.attach(terminal, delegate: context.coordinator)
+    nsView.mount(terminal)
+    (terminal as? OperatorTerminalView)?.apply(preferences, palette: colorPalette)
+    (terminal as? OperatorTerminalView)?.setKeyboardInputOwner(shouldFocus)
+    if shouldFocus { session.takeKeyboardFocus() }
+  }
+
+  @MainActor static func dismantleNSView(
+    _ nsView: TerminalContainerView, coordinator: Coordinator
+  ) {
+    if let terminal = nsView.mountedTerminal {
+      nsView.unmountIfOwned(terminal)
+    }
   }
 
   final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {

@@ -1,5 +1,7 @@
 import Foundation
 
+@testable import Operator
+
 enum TestSupport {
   static func temporaryDirectory() throws -> URL {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
@@ -34,5 +36,26 @@ enum TestSupport {
     try runGit(["init"], in: directory)
     try runGit(["config", "user.email", "operator@example.test"], in: directory)
     try runGit(["config", "user.name", "Operator Test"], in: directory)
+  }
+}
+
+@MainActor
+extension WorkspaceController {
+  /// Launch a harness-shaped session without requiring the real CLI binary.
+  /// Workspace tests validate routing and layout, not third-party installation.
+  func launchHarnessForTesting(_ kind: HarnessKind, intoPane paneID: UUID? = nil) {
+    guard let project = selectedProject, let workspace = project.workspaces.first else { return }
+    let command: String
+    switch kind {
+    case .claudeCode: command = "claude"
+    case .codex: command = "codex"
+    case .generic: return
+    }
+    let existingCount = sessions.count { $0.request.harness == kind }
+    let title = existingCount == 0 ? kind.displayName : "\(kind.displayName) \(existingCount + 1)"
+    launch(
+      LaunchRequest(
+        title: title, command: command, directory: workspace.directory,
+        projectID: project.id, workspaceID: workspace.id, harness: kind), intoPane: paneID)
   }
 }

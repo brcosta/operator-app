@@ -8,6 +8,11 @@ private struct TabRenameTarget: Identifiable {
   var id: UUID { tab.id }
 }
 
+private struct TabCloseTarget: Identifiable {
+  let tab: WorkspaceTab
+  var id: UUID { tab.id }
+}
+
 enum OperatorMotion {
   static let quickDuration = 0.16
   static let standardDuration = 0.22
@@ -42,12 +47,21 @@ enum OperatorAlertActionStyle {
   static let destructiveRole: ButtonRole? = nil
 }
 
+enum WorkspacePresentationPolicy {
+  static func shouldRenderInterface(
+    notificationPermissionPrompt: NotificationPermissionPrompt?
+  ) -> Bool {
+    notificationPermissionPrompt == nil
+  }
+}
+
 struct WorkspaceView: View {
   @ObservedObject var controller: WorkspaceController
   @ObservedObject private var store: StateStore
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var paletteVisible = false
   @State private var closeTarget: TerminalSession?
+  @State private var closeTabTarget: TabCloseTarget?
   @State private var renameTabTarget: TabRenameTarget?
   @State private var briefTarget: TerminalSession?
   @State private var activityVisible = false
@@ -89,157 +103,169 @@ struct WorkspaceView: View {
   }
 
   var body: some View {
-    NavigationSplitView {
-      SidebarView(store: store, controller: controller)
-        .navigationSplitViewColumnWidth(min: 235, ideal: 255, max: 320)
-    } detail: {
-      HStack(spacing: 0) {
-        ZStack(alignment: .top) {
-          VStack(spacing: 0) {
-            if hasOpenContent {
-              sessionTabs
-                .transition(.opacity.combined(with: .move(edge: .top)))
-              Divider()
-                .transition(.opacity)
+    Group {
+      if WorkspacePresentationPolicy.shouldRenderInterface(
+        notificationPermissionPrompt: controller.notificationPermissionPrompt)
+      {
+        NavigationSplitView {
+          SidebarView(store: store, controller: controller)
+            .navigationSplitViewColumnWidth(min: 235, ideal: 255, max: 320)
+        } detail: {
+          HStack(spacing: 0) {
+            ZStack(alignment: .top) {
+              VStack(spacing: 0) {
+                if hasOpenContent {
+                  sessionTabs
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                  Divider()
+                    .transition(.opacity)
+                }
+                terminalArea
+              }
+              .animation(
+                OperatorMotion.standard(reduceMotion: reduceMotion), value: hasOpenContent)
+              reliabilityToast
+                .frame(maxWidth: OperatorMotion.toastMaximumWidth)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .onHover { recoveryToastHovered = $0 }
+                .transition(
+                  .move(edge: .top)
+                    .combined(with: .opacity)
+                    .combined(with: .scale(scale: 0.98, anchor: .top))
+                )
+                .zIndex(20)
             }
-            terminalArea
+            .animation(
+              OperatorMotion.toast(reduceMotion: reduceMotion), value: store.persistenceMessage
+            )
+            .animation(
+              OperatorMotion.toast(reduceMotion: reduceMotion), value: store.recoveryMessage)
+
+            if fileNavigatorVisible, let root = selectedProjectRoot {
+              Divider()
+              ProjectFileNavigator(
+                root: root,
+                openFile: controller.openFile,
+                close: { fileNavigatorVisible = false },
+                fileWatchingEnabled: store.state.integrationPreferences.fileWatchingEnabled
+              )
+              .frame(width: 290)
+              .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
           }
           .animation(
-            OperatorMotion.standard(reduceMotion: reduceMotion), value: hasOpenContent)
-          reliabilityToast
-            .frame(maxWidth: OperatorMotion.toastMaximumWidth)
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .onHover { recoveryToastHovered = $0 }
-            .transition(
-              .move(edge: .top)
-                .combined(with: .opacity)
-                .combined(with: .scale(scale: 0.98, anchor: .top))
-            )
-            .zIndex(20)
-        }
-        .animation(
-          OperatorMotion.toast(reduceMotion: reduceMotion), value: store.persistenceMessage
-        )
-        .animation(OperatorMotion.toast(reduceMotion: reduceMotion), value: store.recoveryMessage)
-
-        if fileNavigatorVisible, let root = selectedProjectRoot {
-          Divider()
-          ProjectFileNavigator(
-            root: root,
-            openFile: controller.openFile,
-            close: { fileNavigatorVisible = false },
-            fileWatchingEnabled: store.state.integrationPreferences.fileWatchingEnabled
+            OperatorMotion.standard(reduceMotion: reduceMotion), value: fileNavigatorVisible
           )
-          .frame(width: 290)
-          .transition(.move(edge: .trailing).combined(with: .opacity))
+          .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+              if selectedProject != nil {
+                Button {
+                  paletteVisible = true
+                } label: {
+                  Label("Command Palette", systemImage: "command")
+                }
+                .operatorShortcut(controller.store.shortcut(for: .newSession))
+                .help("Open Command Palette")
+                .accessibilityIdentifier("operator.commandPalette")
+                Button {
+                  activityVisible = true
+                } label: {
+                  Label("Activity", systemImage: "clock.arrow.circlepath")
+                }
+                .operatorShortcut(controller.store.shortcut(for: .activity))
+                .help("Show Agent Activity")
+                .accessibilityIdentifier("operator.activity")
+              }
+              if let selectedSession = controller.selectedSession {
+                Button {
+                  briefTarget = selectedSession
+                } label: {
+                  Label("Task Brief", systemImage: "note.text")
+                }
+                .operatorShortcut(controller.store.shortcut(for: .taskBrief))
+                .help("Edit Task Brief")
+                if controller.sessions.count >= 2 {
+                  Button {
+                    controller.missionControlLayout()
+                  } label: {
+                    Label("Mission Control", systemImage: "square.grid.2x2")
+                  }
+                  .operatorShortcut(controller.store.shortcut(for: .missionControl))
+                  .help("Arrange panes in Mission Control")
+                }
+                if selectedSession.status == .running {
+                  Button {
+                    selectedSession.terminate()
+                  } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                  }
+                  .help("Stop the focused terminal")
+                }
+                Button {
+                  controller.restart(selectedSession)
+                } label: {
+                  Label("Restart", systemImage: "arrow.clockwise")
+                }
+                .help("Restart the focused terminal")
+                Button {
+                  closeTarget = selectedSession
+                } label: {
+                  Label("Close", systemImage: "xmark")
+                }
+                .operatorShortcut(controller.store.shortcut(for: .closePane))
+                .help("Close the focused pane")
+                if controller.sessions.count >= 2 {
+                  Button {
+                    controller.focusAdjacentSession(-1)
+                  } label: {
+                    Image(systemName: "chevron.left")
+                  }
+                  .operatorShortcut(controller.store.shortcut(for: .previousPane))
+                  .help("Focus previous pane")
+                  Button {
+                    controller.focusAdjacentSession(1)
+                  } label: {
+                    Image(systemName: "chevron.right")
+                  }
+                  .operatorShortcut(controller.store.shortcut(for: .nextPane))
+                  .help("Focus next pane")
+                }
+              }
+              if controller.canSplitFocusedPane {
+                Menu {
+                  Button("Split Horizontally") { controller.splitFocusedTerminal(.horizontal) }
+                  Button("Split Vertically") { controller.splitFocusedTerminal(.vertical) }
+                } label: {
+                  Label("Split", systemImage: "rectangle.split.2x1")
+                }
+                .operatorShortcut(controller.store.shortcut(for: .splitPane))
+                .help("Split the focused pane")
+              }
+              Button {
+                shortcutsVisible = true
+              } label: {
+                Label("Settings", systemImage: "gearshape")
+              }
+              .help("Open settings and keyboard shortcuts")
+              .accessibilityIdentifier("operator.shortcuts")
+              if selectedProject != nil {
+                Button {
+                  fileNavigatorVisible.toggle()
+                } label: {
+                  Label(
+                    fileNavigatorVisible ? "Hide Files" : "Show Files",
+                    systemImage: "sidebar.trailing")
+                }
+                .help(fileNavigatorVisible ? "Hide file navigator" : "Show file navigator")
+                .accessibilityIdentifier("operator.fileNavigator.toggle")
+              }
+            }
+          }
         }
-      }
-      .animation(
-        OperatorMotion.standard(reduceMotion: reduceMotion), value: fileNavigatorVisible
-      )
-      .toolbar {
-        ToolbarItemGroup(placement: .primaryAction) {
-          if selectedProject != nil {
-            Button {
-              paletteVisible = true
-            } label: {
-              Label("Command Palette", systemImage: "command")
-            }
-            .operatorShortcut(controller.store.shortcut(for: .newSession))
-            .help("Open Command Palette")
-            .accessibilityIdentifier("operator.commandPalette")
-            Button {
-              activityVisible = true
-            } label: {
-              Label("Activity", systemImage: "clock.arrow.circlepath")
-            }
-            .operatorShortcut(controller.store.shortcut(for: .activity))
-            .help("Show Agent Activity")
-            .accessibilityIdentifier("operator.activity")
-            Button {
-              fileNavigatorVisible.toggle()
-            } label: {
-              Label(
-                fileNavigatorVisible ? "Hide Files" : "Show Files",
-                systemImage: "sidebar.trailing")
-            }
-            .help(fileNavigatorVisible ? "Hide file navigator" : "Show file navigator")
-            .accessibilityIdentifier("operator.fileNavigator.toggle")
-          }
-          if let selectedSession = controller.selectedSession {
-            Button {
-              briefTarget = selectedSession
-            } label: {
-              Label("Task Brief", systemImage: "note.text")
-            }
-            .operatorShortcut(controller.store.shortcut(for: .taskBrief))
-            .help("Edit Task Brief")
-            if controller.sessions.count >= 2 {
-              Button {
-                controller.missionControlLayout()
-              } label: {
-                Label("Mission Control", systemImage: "square.grid.2x2")
-              }
-              .operatorShortcut(controller.store.shortcut(for: .missionControl))
-              .help("Arrange panes in Mission Control")
-            }
-            if selectedSession.status == .running {
-              Button {
-                selectedSession.terminate()
-              } label: {
-                Label("Stop", systemImage: "stop.fill")
-              }
-              .help("Stop the focused terminal")
-            }
-            Button {
-              controller.restart(selectedSession)
-            } label: {
-              Label("Restart", systemImage: "arrow.clockwise")
-            }
-            .help("Restart the focused terminal")
-            Button {
-              closeTarget = selectedSession
-            } label: {
-              Label("Close", systemImage: "xmark")
-            }
-            .operatorShortcut(controller.store.shortcut(for: .closePane))
-            .help("Close the focused pane")
-            if controller.sessions.count >= 2 {
-              Button {
-                controller.focusAdjacentSession(-1)
-              } label: {
-                Image(systemName: "chevron.left")
-              }
-              .operatorShortcut(controller.store.shortcut(for: .previousPane))
-              .help("Focus previous pane")
-              Button {
-                controller.focusAdjacentSession(1)
-              } label: {
-                Image(systemName: "chevron.right")
-              }
-              .operatorShortcut(controller.store.shortcut(for: .nextPane))
-              .help("Focus next pane")
-            }
-          }
-          if controller.canSplitFocusedPane {
-            Menu {
-              Button("Split Horizontally") { controller.splitFocusedTerminal(.horizontal) }
-              Button("Split Vertically") { controller.splitFocusedTerminal(.vertical) }
-            } label: {
-              Label("Split", systemImage: "rectangle.split.2x1")
-            }
-            .operatorShortcut(controller.store.shortcut(for: .splitPane))
-            .help("Split the focused pane")
-          }
-          Button {
-            shortcutsVisible = true
-          } label: {
-            Label("Settings", systemImage: "gearshape")
-          }
-          .help("Open settings and keyboard shortcuts")
-          .accessibilityIdentifier("operator.shortcuts")
-        }
+      } else {
+        Color(nsColor: .windowBackgroundColor)
+          .ignoresSafeArea()
       }
     }
     .navigationSplitViewStyle(.balanced)
@@ -277,8 +303,13 @@ struct WorkspaceView: View {
     .onReceive(NotificationCenter.default.publisher(for: .operatorSettings)) { _ in
       shortcutsVisible = true
     }
-    .task(id: store.recoveryMessage) {
-      guard store.recoveryMessage != nil else { return }
+    .task(
+      id:
+        "\(store.recoveryMessage ?? "none")#\(controller.notificationPermissionPrompt?.rawValue ?? "ready")"
+    ) {
+      guard controller.notificationPermissionPrompt == nil, store.recoveryMessage != nil else {
+        return
+      }
       var remainingTicks =
         Int(OperatorMotion.recoveryToastAutoDismissSeconds)
         * OperatorMotion.recoveryToastTicksPerSecond
@@ -318,6 +349,27 @@ struct WorkspaceView: View {
       Text(
         closeTarget?.status == .running
           ? "Its running process will receive SIGTERM." : "This session has already exited.")
+    }
+    .alert(
+      "Close this tab?",
+      isPresented: Binding(
+        get: { closeTabTarget != nil }, set: { if !$0 { closeTabTarget = nil } })
+    ) {
+      Button("Close Tab", role: OperatorAlertActionStyle.destructiveRole) {
+        if let target = closeTabTarget {
+          controller.closeTab(target.tab.id)
+        }
+        closeTabTarget = nil
+      }
+      Button("Cancel", role: .cancel) { closeTabTarget = nil }
+    } message: {
+      if let target = closeTabTarget {
+        let paneCount = target.tab.layout.paneIDs.count
+        let paneWord = paneCount == 1 ? "pane" : "panes"
+        Text(
+          "Closing \(target.tab.title) will close \(paneCount) \(paneWord) and terminate any running processes in it."
+        )
+      }
     }
     .alert(
       "Command finished",
@@ -395,16 +447,16 @@ struct WorkspaceView: View {
     ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: 4) {
         Menu {
-          Button("Start Codex") { controller.launchQuickHarness(.codex) }
-            .disabled(!HarnessInstallation.isInstalled(.codex))
-            .help(
-              HarnessInstallation.isInstalled(.codex)
-                ? "Start Codex" : HarnessInstallation.unavailableHelp(for: .codex))
           Button("Start Claude Code") { controller.launchQuickHarness(.claudeCode) }
             .disabled(!HarnessInstallation.isInstalled(.claudeCode))
             .help(
               HarnessInstallation.isInstalled(.claudeCode)
                 ? "Start Claude Code" : HarnessInstallation.unavailableHelp(for: .claudeCode))
+          Button("Start Codex") { controller.launchQuickHarness(.codex) }
+            .disabled(!HarnessInstallation.isInstalled(.codex))
+            .help(
+              HarnessInstallation.isInstalled(.codex)
+                ? "Start Codex" : HarnessInstallation.unavailableHelp(for: .codex))
           Divider()
           Button("Custom Command…") { paletteVisible = true }
           if !recentCustomCommands.isEmpty {
@@ -455,7 +507,7 @@ struct WorkspaceView: View {
                   .foregroundStyle(.orange)
               }
             }
-            .padding(.horizontal, 10).padding(.vertical, 7)
+            .padding(.leading, 10).padding(.trailing, 30).padding(.vertical, 7)
             .background(
               tab.id == controller.selectedTabID ? Color.accentColor.opacity(0.18) : .clear,
               in: RoundedRectangle(cornerRadius: 8)
@@ -464,6 +516,21 @@ struct WorkspaceView: View {
               RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(
                   tab.id == controller.selectedTabID ? Color.accentColor.opacity(0.28) : .clear)
+            }
+            .overlay(alignment: .trailing) {
+              Button {
+                closeTabTarget = TabCloseTarget(tab: tab)
+              } label: {
+                Image(systemName: "xmark")
+                  .font(.caption2.weight(.bold))
+                  .foregroundStyle(.secondary)
+                  .frame(width: 20, height: 20)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .help("Close tab")
+              .accessibilityLabel("Close (tab.title) tab")
+              .padding(.trailing, 5)
             }
           }
           .buttonStyle(.plain)
@@ -629,6 +696,10 @@ struct WorkspaceView: View {
         openCustomLauncher: { paneID in
           splitPaneTarget = SplitPaneTarget(id: paneID)
         }, requestClose: { closeTarget = $0 })
+      // A collapsed NSSplitView can retain its old child controllers when its root changes from
+      // a split to a single pane. Keying the tree by its value forces a clean native transition
+      // while TerminalSession keeps the underlying process and buffer alive.
+      .id(layout)
     } else {
       EmptyWorkspaceLauncher(
         project: selectedProject,
@@ -644,6 +715,7 @@ struct WorkspaceView: View {
   private func terminalPane(_ session: TerminalSession) -> some View {
     TerminalPaneView(
       session: session, isFocused: controller.selectedSessionID == session.id,
+      showsFocusIndicator: false,
       focusColor: selectedProject?.accent.color ?? .accentColor, controller: controller,
       close: { closeTarget = session },
       select: {
@@ -688,17 +760,22 @@ private struct EmptyWorkspaceLauncher: View {
                   ? "One calm workspace for every terminal, coding agent, and artifact you need to ship."
                   : "Start a focused harness or run any command in this workspace."
               )
+              .font(.title2)
               .foregroundStyle(.secondary)
               .multilineTextAlignment(.center)
-              .frame(maxWidth: 590)
+              .lineLimit(1)
+              .minimumScaleFactor(0.78)
+              .frame(maxWidth: 740)
               if project == nil {
                 Text(
                   "Operator keeps your sessions alive, your layouts ready, and your next action close at hand."
                 )
-                .font(.callout)
+                .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: 740)
               }
             }
             if project == nil {
@@ -712,7 +789,7 @@ private struct EmptyWorkspaceLauncher: View {
             } else {
               if let workspace = project?.workspaces.first {
                 Label(workspace.directory, systemImage: "folder")
-                  .font(.caption.monospaced())
+                  .font(.callout.monospaced())
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
                   .truncationMode(.middle)
@@ -723,19 +800,19 @@ private struct EmptyWorkspaceLauncher: View {
                 columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10
               ) {
                 EmptyPaneAction(
-                  title: "Codex", subtitle: "Coding agent",
-                  harness: .codex, color: .blue,
-                  isEnabled: HarnessInstallation.isInstalled(.codex),
-                  disabledReason: HarnessInstallation.unavailableHelp(for: .codex)
-                ) { startHarness(.codex) }
-                .accessibilityIdentifier("operator.emptyWorkspace.startCodex")
-                EmptyPaneAction(
                   title: "Claude Code", subtitle: "Coding agent",
                   harness: .claudeCode, color: .green,
                   isEnabled: HarnessInstallation.isInstalled(.claudeCode),
                   disabledReason: HarnessInstallation.unavailableHelp(for: .claudeCode)
                 ) { startHarness(.claudeCode) }
                 .accessibilityIdentifier("operator.emptyWorkspace.startClaude")
+                EmptyPaneAction(
+                  title: "Codex", subtitle: "Coding agent",
+                  harness: .codex, color: .blue,
+                  isEnabled: HarnessInstallation.isInstalled(.codex),
+                  disabledReason: HarnessInstallation.unavailableHelp(for: .codex)
+                ) { startHarness(.codex) }
+                .accessibilityIdentifier("operator.emptyWorkspace.startCodex")
                 EmptyPaneAction(
                   title: "Terminal", subtitle: "Your default shell", symbol: "terminal",
                   color: project?.accent.color ?? .accentColor, action: startTerminal
@@ -822,8 +899,8 @@ private struct OnboardingStep: View {
         .frame(width: 24, height: 24)
         .background(Color.accentColor.opacity(0.12), in: Circle())
       VStack(alignment: .leading, spacing: 2) {
-        Text(title).font(.caption.weight(.semibold))
-        Text(detail).font(.caption2).foregroundStyle(.secondary)
+        Text(title).font(.body.weight(.semibold))
+        Text(detail).font(.callout).foregroundStyle(.secondary)
       }
       if number != "3" {
         Spacer(minLength: 8)
@@ -858,18 +935,16 @@ private struct PaneStatusBar: View {
   @ObservedObject var session: TerminalSession
   let close: () -> Void
   @State private var answerTarget: HarnessQuestion?
-  @State private var isEditingCheckpoint = false
-  @State private var checkpointDraft = ""
 
   var body: some View {
     let question = controller.questions.first { $0.sessionID == session.id }
     let paneState = controller.paneState(for: session)
-    let metadata = controller.paneMetadata(for: session)
     HStack(spacing: 8) {
       HarnessIdentityMark(kind: session.request.harness)
-      Label(session.title, systemImage: paneState.symbolName)
+      Image(systemName: paneState.symbolName)
         .foregroundStyle(paneState.tint)
-        .lineLimit(1)
+        .accessibilityLabel(paneState.title)
+        .help(paneState.title)
       Text(URL(fileURLWithPath: session.request.directory).lastPathComponent)
         .foregroundStyle(.secondary).lineLimit(1)
       Button {
@@ -908,40 +983,6 @@ private struct PaneStatusBar: View {
           .foregroundStyle(.secondary).lineLimit(1)
       }
       SessionRadarButton(files: session.changedFiles)
-      Menu {
-        Button("Set checkpoint…") {
-          checkpointDraft = metadata.checkpoint ?? ""
-          isEditingCheckpoint = true
-        }
-        if metadata.hasCheckpoint {
-          Button("Clear checkpoint", role: .destructive) {
-            controller.setPaneCheckpoint(nil, for: session)
-          }
-        }
-        if paneState == .awaitingReview {
-          Button("Mark review complete") { controller.markPaneReviewed(session) }
-        }
-        Divider()
-        Menu("Notification policy") {
-          ForEach(PaneNotificationPolicy.allCases) { policy in
-            Button {
-              controller.setPaneNotificationPolicy(policy, for: session)
-            } label: {
-              if metadata.notificationPolicy == policy {
-                Label(policy.title, systemImage: "checkmark")
-              } else {
-                Text(policy.title)
-              }
-            }
-            .help(policy.detail)
-          }
-        }
-      } label: {
-        Image(systemName: metadata.hasCheckpoint ? "bookmark.fill" : "slider.horizontal.3")
-          .foregroundStyle(metadata.hasCheckpoint ? Color.accentColor : .secondary)
-      }
-      .menuStyle(.borderlessButton)
-      .help("Pane checkpoint and notification policy")
       Spacer()
       if let question {
         Button {
@@ -970,15 +1011,6 @@ private struct PaneStatusBar: View {
         controller.answerQuestion(question, answer: answer)
       }
     }
-    .sheet(isPresented: $isEditingCheckpoint) {
-      PaneCheckpointSheet(
-        checkpoint: $checkpointDraft,
-        save: {
-          controller.setPaneCheckpoint(checkpointDraft, for: session)
-          isEditingCheckpoint = false
-        },
-        cancel: { isEditingCheckpoint = false })
-    }
   }
 }
 
@@ -995,39 +1027,16 @@ extension AgentPaneState {
   }
 }
 
-private struct PaneCheckpointSheet: View {
-  @Binding var checkpoint: String
-  let save: () -> Void
-  let cancel: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Label("Pane checkpoint", systemImage: "bookmark")
-        .font(.title3.weight(.semibold))
-      Text("Keep a concise note about the next safe handoff or review point.")
-        .foregroundStyle(.secondary)
-      TextField(
-        "For example, review the migration before merging", text: $checkpoint, axis: .vertical
-      )
-      .lineLimit(3...6)
-      .textFieldStyle(.roundedBorder)
-      HStack {
-        Spacer()
-        Button("Cancel", action: cancel)
-        Button("Save", action: save).keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(24)
-    .frame(width: 440)
-  }
-}
-
 private struct TerminalLayoutView: View {
   let layout: TerminalLayout
   let path: String
   @ObservedObject var controller: WorkspaceController
   let openCustomLauncher: (UUID) -> Void
   let requestClose: (TerminalSession) -> Void
+
+  private var shouldShowPaneFocus: Bool {
+    (controller.terminalLayout?.paneIDs.count ?? 0) > 1
+  }
 
   var body: some View {
     let focusColor = controller.selectedProject?.accent.color ?? .accentColor
@@ -1036,6 +1045,7 @@ private struct TerminalLayoutView: View {
       if let session = controller.sessions.first(where: { $0.id == id }) {
         TerminalPaneView(
           session: session, isFocused: controller.selectedSessionID == id,
+          showsFocusIndicator: shouldShowPaneFocus,
           focusColor: focusColor, controller: controller,
           close: { requestClose(session) },
           select: {
@@ -1046,6 +1056,7 @@ private struct TerminalLayoutView: View {
       MarkdownPaneContainer(
         paneID: paneID, path: path, workspaceDirectory: workspaceDirectory,
         isFocused: controller.selectedPaneID == paneID,
+        showsFocusIndicator: shouldShowPaneFocus,
         select: { controller.selectContentPane(paneID) },
         close: { controller.closeContentPane(paneID) },
         onDeleted: { controller.reportOpenFileMissing(paneID: paneID, path: path) },
@@ -1054,9 +1065,9 @@ private struct TerminalLayoutView: View {
       ProjectFileViewer(
         path: filePath, workspaceDirectory: workspaceDirectory,
         isFocused: controller.selectedPaneID == paneID,
+        showsFocusIndicator: shouldShowPaneFocus,
         select: { controller.selectContentPane(paneID) },
         close: { controller.closeContentPane(paneID) },
-        openMarkdown: { controller.openMarkdown(filePath) },
         onDeleted: { controller.reportOpenFileMissing(paneID: paneID, path: filePath) },
         fileWatchingEnabled: controller.store.state.integrationPreferences.fileWatchingEnabled)
     case .empty(let paneID):
@@ -1067,6 +1078,7 @@ private struct TerminalLayoutView: View {
         close: { controller.closeEmptyPane(paneID) },
         onFocus: { controller.selectEmptyPane(paneID) },
         isFocused: controller.selectedEmptyPaneID == paneID,
+        showsFocusIndicator: shouldShowPaneFocus,
         focusColor: focusColor)
     case .split(let orientation, let first, let second):
       EqualSplitView(
@@ -1091,6 +1103,7 @@ private struct MarkdownPaneContainer: View {
   let path: String
   let workspaceDirectory: String
   let isFocused: Bool
+  let showsFocusIndicator: Bool
   let select: () -> Void
   let close: () -> Void
   let onDeleted: () -> Void
@@ -1099,6 +1112,7 @@ private struct MarkdownPaneContainer: View {
 
   init(
     paneID: UUID, path: String, workspaceDirectory: String, isFocused: Bool,
+    showsFocusIndicator: Bool,
     select: @escaping () -> Void, close: @escaping () -> Void,
     onDeleted: @escaping () -> Void, fileWatchingEnabled: Bool
   ) {
@@ -1106,6 +1120,7 @@ private struct MarkdownPaneContainer: View {
     self.path = path
     self.workspaceDirectory = workspaceDirectory
     self.isFocused = isFocused
+    self.showsFocusIndicator = showsFocusIndicator
     self.select = select
     self.close = close
     self.onDeleted = onDeleted
@@ -1119,7 +1134,7 @@ private struct MarkdownPaneContainer: View {
     MarkdownDocumentView(document: document, close: close)
       .contentShape(Rectangle())
       .onTapGesture(perform: select)
-      .paneFocusIndicator(isFocused, color: .accentColor)
+      .paneFocusIndicator(isFocused && showsFocusIndicator, color: .accentColor)
       .onAppear(perform: reportDeletionIfNeeded)
       .onChange(of: document.errorMessage) { _, _ in reportDeletionIfNeeded() }
       .onChange(of: isFocused) { _, _ in reportDeletionIfNeeded() }
@@ -1155,6 +1170,7 @@ private struct EqualSplitView<First: View, Second: View>: NSViewControllerRepres
 private struct TerminalPaneView: View {
   @ObservedObject var session: TerminalSession
   let isFocused: Bool
+  let showsFocusIndicator: Bool
   let focusColor: Color
   @ObservedObject var controller: WorkspaceController
   let close: () -> Void
@@ -1174,7 +1190,7 @@ private struct TerminalPaneView: View {
         }
       }
     }
-    .paneFocusIndicator(isFocused, color: focusColor)
+    .paneFocusIndicator(isFocused && showsFocusIndicator, color: focusColor)
     .onDrop(of: [.fileURL], isTargeted: nil) { providers in
       for provider in providers {
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
@@ -1190,10 +1206,23 @@ private struct TerminalPaneView: View {
   }
 
   private var terminalSurface: some View {
-    TerminalHost(session: session, preferences: controller.store.state.terminalPreferences)
-      .id(session.id)
-      .onTapGesture(perform: select)
+    TerminalHost(
+      session: session, preferences: controller.store.state.terminalPreferences,
+      shouldFocus: isFocused
+    )
+    .id(
+      TerminalHostIdentity(
+        sessionID: session.id,
+        refreshRevision: session.request.harness == .codex
+          ? controller.codexPanelRefreshRevision : 0))
+    .onTapGesture(perform: select)
   }
+
+}
+
+private struct TerminalHostIdentity: Hashable {
+  let sessionID: UUID
+  let refreshRevision: Int
 }
 
 private final class OperatorSplitView: NSSplitView {
@@ -1355,6 +1384,7 @@ private struct EmptySplitPane: View {
   let close: () -> Void
   let onFocus: () -> Void
   let isFocused: Bool
+  let showsFocusIndicator: Bool
   let focusColor: Color
 
   var body: some View {
@@ -1375,18 +1405,18 @@ private struct EmptySplitPane: View {
             columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10
           ) {
             EmptyPaneAction(
+              title: "Claude Code", subtitle: "Coding agent", harness: .claudeCode,
+              color: .green,
+              isEnabled: HarnessInstallation.isInstalled(.claudeCode),
+              disabledReason: HarnessInstallation.unavailableHelp(for: .claudeCode)
+            ) { startHarness(.claudeCode) }
+            EmptyPaneAction(
               title: "Codex", subtitle: "Coding agent",
               harness: .codex,
               color: .blue,
               isEnabled: HarnessInstallation.isInstalled(.codex),
               disabledReason: HarnessInstallation.unavailableHelp(for: .codex)
             ) { startHarness(.codex) }
-            EmptyPaneAction(
-              title: "Claude Code", subtitle: "Coding agent", harness: .claudeCode,
-              color: .green,
-              isEnabled: HarnessInstallation.isInstalled(.claudeCode),
-              disabledReason: HarnessInstallation.unavailableHelp(for: .claudeCode)
-            ) { startHarness(.claudeCode) }
             EmptyPaneAction(
               title: "Terminal", subtitle: "Your default shell", symbol: "terminal",
               color: focusColor, action: startTerminal)
@@ -1409,7 +1439,7 @@ private struct EmptySplitPane: View {
     .background(focusColor.opacity(0.035))
     .contentShape(Rectangle())
     .onTapGesture(perform: onFocus)
-    .paneFocusIndicator(isFocused, color: focusColor)
+    .paneFocusIndicator(isFocused && showsFocusIndicator, color: focusColor)
   }
 }
 
@@ -1436,8 +1466,8 @@ private struct EmptyPaneAction: View {
             .frame(width: 22)
         }
         VStack(alignment: .leading, spacing: 1) {
-          Text(title).font(.callout.weight(.semibold))
-          Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+          Text(title).font(.title3.weight(.semibold))
+          Text(subtitle).font(.body).foregroundStyle(.secondary)
         }
         Spacer(minLength: 4)
       }
@@ -1673,7 +1703,9 @@ private struct SidebarView: View {
           }
         }
 
-        if sidebarProjects.isEmpty {
+        if SidebarEmptyState.shouldShowNoMatches(
+          projectCount: store.sidebarProjects.count, filter: normalizedSidebarFilter
+        ) {
           ContentUnavailableView(
             "No matches", systemImage: "line.3.horizontal.decrease.circle",
             description: Text("Try another project or tab name.")
@@ -2479,15 +2511,21 @@ private struct OperatorFeatureCard: View {
       Image(systemName: symbol)
         .font(.title3.weight(.semibold))
         .foregroundStyle(Color.accentColor)
-      Text(title).font(.headline)
+      Text(title).font(.title3.weight(.semibold))
       Text(detail)
-        .font(.caption)
+        .font(.title3)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
     .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
     .padding(16)
     .operatorCardSurface()
+  }
+}
+
+enum SidebarEmptyState {
+  static func shouldShowNoMatches(projectCount: Int, filter: String) -> Bool {
+    projectCount > 0 && !filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 }
 

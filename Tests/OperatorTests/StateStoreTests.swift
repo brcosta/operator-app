@@ -22,19 +22,17 @@ struct StateStoreTests {
     #expect(StateStore(fileURL: stateURL).state.integrationPreferences == preferences)
   }
 
-  @Test func agentPaneMetadataPersistsCheckpointReviewAndNotificationPolicy() throws {
+  @Test func agentPaneMetadataPersistsReviewAndNotificationPolicy() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
     let stateURL = directory.appendingPathComponent("state.json")
     let store = StateStore(fileURL: stateURL)
     let sessionID = UUID()
 
-    store.setPaneCheckpoint("Review the migration output", for: sessionID)
     store.setPaneNotificationPolicy(.muted, for: sessionID)
     store.setPaneAwaitingReview(true, for: sessionID)
 
     let metadata = StateStore(fileURL: stateURL).paneMetadata(for: sessionID)
-    #expect(metadata.checkpoint == "Review the migration output")
     #expect(metadata.notificationPolicy == .muted)
     #expect(metadata.isAwaitingReview)
     #expect(!metadata.notificationPolicy.permits(.failed))

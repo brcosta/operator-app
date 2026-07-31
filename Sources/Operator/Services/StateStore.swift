@@ -274,14 +274,6 @@ final class StateStore: ObservableObject {
     state.agentPaneMetadata[sessionID] ?? AgentPaneMetadata()
   }
 
-  func setPaneCheckpoint(_ checkpoint: String?, for sessionID: UUID) {
-    var metadata = paneMetadata(for: sessionID)
-    let cleaned = checkpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-    metadata.checkpoint = cleaned?.isEmpty == false ? cleaned : nil
-    state.agentPaneMetadata[sessionID] = metadata
-    save()
-  }
-
   func setPaneNotificationPolicy(_ policy: PaneNotificationPolicy, for sessionID: UUID) {
     var metadata = paneMetadata(for: sessionID)
     guard metadata.notificationPolicy != policy else { return }

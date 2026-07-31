@@ -10,6 +10,13 @@ import WebKit
 #endif
 
 struct PresentationAndIPCTests {
+  @Test func emptySidebarDoesNotPresentAFilterMessage() {
+    #expect(!SidebarEmptyState.shouldShowNoMatches(projectCount: 0, filter: ""))
+    #expect(!SidebarEmptyState.shouldShowNoMatches(projectCount: 0, filter: "missing"))
+    #expect(!SidebarEmptyState.shouldShowNoMatches(projectCount: 2, filter: "  "))
+    #expect(SidebarEmptyState.shouldShowNoMatches(projectCount: 2, filter: "missing"))
+  }
+
   @Test func harnessInstallationFindsExecutableAndExplainsMissingCommand() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
@@ -54,8 +61,11 @@ struct PresentationAndIPCTests {
   @Test func settingsAreSeparatedIntoFocusedDestinations() {
     #expect(
       OperatorSettingsSection.allCases.map(\.title)
-        == ["General", "Terminal", "Privacy & Integrations", "Shortcuts", "Data & Diagnostics"])
-    #expect(Set(OperatorSettingsSection.allCases.map(\.systemImage)).count == 5)
+        == [
+          "General", "Terminal", "Terminal Colors", "Privacy & Integrations", "Shortcuts",
+          "Data & Diagnostics",
+        ])
+    #expect(Set(OperatorSettingsSection.allCases.map(\.systemImage)).count == 6)
     #expect(OperatorSettingsSection.allCases.allSatisfy { !$0.subtitle.isEmpty })
   }
 
@@ -440,6 +450,14 @@ struct PresentationAndIPCTests {
     #expect(OperatorMotion.remainingRecoveryToastTicks(0, isHovered: false) == 0)
     #expect(OperatorMotion.standard(reduceMotion: false) != nil)
     #expect(OperatorMotion.standard(reduceMotion: true) == nil)
+  }
+
+  @Test func workspaceWaitsForNotificationPromptBeforeRenderingInterfaceAndToasts() {
+    #expect(
+      !WorkspacePresentationPolicy.shouldRenderInterface(notificationPermissionPrompt: .request))
+    #expect(
+      !WorkspacePresentationPolicy.shouldRenderInterface(notificationPermissionPrompt: .denied))
+    #expect(WorkspacePresentationPolicy.shouldRenderInterface(notificationPermissionPrompt: nil))
   }
 
   @Test func sessionFileRadarPresentationHandlesEmptyAndSingularStates() {

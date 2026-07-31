@@ -13,15 +13,19 @@ struct TerminalPreferences: Codable, Hashable {
   var fontSize: Double
   var ligaturesEnabled: Bool
   var scrollbackLines: Int
+  /// Optional user override for dark mode. Light mode keeps its dedicated high-contrast palette.
+  var darkColorPalette: TerminalColorPalette?
 
   init(
     fontFamily: String? = nil, fontSize: Double = defaultFontSize,
-    ligaturesEnabled: Bool = false, scrollbackLines: Int = 20_000
+    ligaturesEnabled: Bool = false, scrollbackLines: Int = 20_000,
+    darkColorPalette: TerminalColorPalette? = nil
   ) {
     self.fontFamily = Self.normalizedFontFamily(fontFamily)
     self.fontSize = Self.normalizedFontSize(fontSize)
     self.ligaturesEnabled = ligaturesEnabled
     self.scrollbackLines = Self.normalizedScrollback(scrollbackLines)
+    self.darkColorPalette = darkColorPalette
   }
 
   init(from decoder: any Decoder) throws {
@@ -33,13 +37,15 @@ struct TerminalPreferences: Codable, Hashable {
       ligaturesEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .ligaturesEnabled))
         ?? false,
       scrollbackLines: (try? container.decodeIfPresent(Int.self, forKey: .scrollbackLines))
-        ?? 20_000)
+        ?? 20_000,
+      darkColorPalette: try? container.decodeIfPresent(
+        TerminalColorPalette.self, forKey: .darkColorPalette))
   }
 
   var normalized: TerminalPreferences {
     TerminalPreferences(
       fontFamily: fontFamily, fontSize: fontSize, ligaturesEnabled: ligaturesEnabled,
-      scrollbackLines: scrollbackLines)
+      scrollbackLines: scrollbackLines, darkColorPalette: darkColorPalette)
   }
 
   private static func normalizedFontFamily(_ value: String?) -> String? {
@@ -120,5 +126,15 @@ struct TerminalFocusIntent: Equatable {
 
   mutating func recordDelivery(succeeded: Bool) {
     if succeeded { isPending = false }
+  }
+}
+
+enum TerminalKeyboardFallbackPolicy {
+  static func shouldForward(
+    isOwner: Bool, isKeyWindow: Bool, hasAttachedSheet: Bool,
+    firstResponderIsTextInput: Bool, usesCommandModifier: Bool
+  ) -> Bool {
+    isOwner && isKeyWindow && !hasAttachedSheet && !firstResponderIsTextInput
+      && !usesCommandModifier
   }
 }

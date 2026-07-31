@@ -1,8 +1,9 @@
 import AppKit
+import Foundation
 import SwiftTerm
 import SwiftUI
 
-struct TerminalRGB: Equatable, Sendable {
+struct TerminalRGB: Codable, Equatable, Hashable, Sendable {
   let red: UInt8
   let green: UInt8
   let blue: UInt8
@@ -11,6 +12,12 @@ struct TerminalRGB: Equatable, Sendable {
     red = UInt8((hex >> 16) & 0xFF)
     green = UInt8((hex >> 8) & 0xFF)
     blue = UInt8(hex & 0xFF)
+  }
+
+  init(red: UInt8, green: UInt8, blue: UInt8) {
+    self.red = red
+    self.green = green
+    self.blue = blue
   }
 
   var hex: UInt32 {
@@ -31,32 +38,43 @@ struct TerminalRGB: Equatable, Sendable {
       green: UInt16(green) * 257,
       blue: UInt16(blue) * 257)
   }
+
+  var swiftUIColor: SwiftUI.Color { SwiftUI.Color(nsColor: appKitColor) }
+
+  init(color: SwiftUI.Color) {
+    let resolved = NSColor(color).usingColorSpace(.sRGB) ?? .black
+    red = UInt8((resolved.redComponent * 255).rounded().clamped(to: 0...255))
+    green = UInt8((resolved.greenComponent * 255).rounded().clamped(to: 0...255))
+    blue = UInt8((resolved.blueComponent * 255).rounded().clamped(to: 0...255))
+  }
 }
 
-struct TerminalColorPalette: Equatable, Sendable {
-  let background: TerminalRGB
-  let foreground: TerminalRGB
-  let cursor: TerminalRGB
-  let cursorText: TerminalRGB
-  let selectionBackground: TerminalRGB
-  let ansiColors: [TerminalRGB]
+struct TerminalColorPalette: Codable, Equatable, Hashable, Sendable {
+  var background: TerminalRGB
+  var foreground: TerminalRGB
+  var cursor: TerminalRGB
+  var cursorText: TerminalRGB
+  var selectionBackground: TerminalRGB
+  var ansiColors: [TerminalRGB]
 
-  /// The iTerm2 Tango profile used as Operator's dark terminal default.
+  /// The user's iTerm2 profile used as Operator's dark terminal default.
   static let iTermDark = TerminalColorPalette(
-    background: TerminalRGB(hex: 0x000000),
-    foreground: TerminalRGB(hex: 0xDEDEDE),
+    background: TerminalRGB(hex: 0x14181D),
+    // Keep the default prompt/output text slightly softer than pure white.
+    // This matches the requested iTerm profile foreground: RGB(198, 198, 198).
+    foreground: TerminalRGB(hex: 0xC6C6C6),
     cursor: TerminalRGB(hex: 0xFFFFFF),
     cursorText: TerminalRGB(hex: 0x000000),
-    selectionBackground: TerminalRGB(hex: 0xB5D5FF),
+    selectionBackground: TerminalRGB(hex: 0xBAD6FC),
     ansiColors: [
-      TerminalRGB(hex: 0x000000), TerminalRGB(hex: 0xCC0000),
-      TerminalRGB(hex: 0x4E9A06), TerminalRGB(hex: 0xC4A000),
-      TerminalRGB(hex: 0x3465A4), TerminalRGB(hex: 0x75507B),
-      TerminalRGB(hex: 0x06989A), TerminalRGB(hex: 0xD3D7CF),
-      TerminalRGB(hex: 0x555753), TerminalRGB(hex: 0xEF2929),
-      TerminalRGB(hex: 0x8AE234), TerminalRGB(hex: 0xFCE94F),
-      TerminalRGB(hex: 0x729FCF), TerminalRGB(hex: 0xAD7FA8),
-      TerminalRGB(hex: 0x34E2E2), TerminalRGB(hex: 0xEEEEEC),
+      TerminalRGB(hex: 0x14191D), TerminalRGB(hex: 0xA74532),
+      TerminalRGB(hex: 0x57BF38), TerminalRGB(hex: 0xC7C43F),
+      TerminalRGB(hex: 0x2E43C0), TerminalRGB(hex: 0xB249B8),
+      TerminalRGB(hex: 0x59C2C5), TerminalRGB(hex: 0xC7C7C7),
+      TerminalRGB(hex: 0x686868), TerminalRGB(hex: 0xD07F78),
+      TerminalRGB(hex: 0x81E398), TerminalRGB(hex: 0xEAE14A),
+      TerminalRGB(hex: 0xA7AAED), TerminalRGB(hex: 0xD482DC),
+      TerminalRGB(hex: 0x8EFAFD), TerminalRGB(hex: 0xFFFFFF),
     ])
 
   /// A light, high-contrast companion palette. Every colored ANSI value has sufficient
@@ -82,6 +100,12 @@ struct TerminalColorPalette: Equatable, Sendable {
     colorScheme == .dark ? iTermDark : paperLight
   }
 
+  static func resolved(for colorScheme: ColorScheme, preferences: TerminalPreferences)
+    -> TerminalColorPalette
+  {
+    colorScheme == .dark ? (preferences.darkColorPalette ?? iTermDark) : paperLight
+  }
+
   @MainActor
   func apply(to terminal: LocalProcessTerminalView) {
     terminal.nativeBackgroundColor = background.appKitColor
@@ -92,5 +116,98 @@ struct TerminalColorPalette: Equatable, Sendable {
     terminal.selectedTextBackgroundColor = selectionBackground.appKitColor
     terminal.useBrightColors = true
     terminal.installColors(ansiColors.map(\.swiftTermColor))
+  }
+}
+
+private extension Double {
+  func clamped(to range: ClosedRange<Double>) -> Double {
+    min(range.upperBound, max(range.lowerBound, self))
+  }
+}
+
+enum ITermProfileImportError: LocalizedError {
+  case unavailable
+  case preferencesUnavailable
+  case selectedProfileUnavailable
+  case colorUnavailable(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .unavailable: "iTerm2 is not installed."
+    case .preferencesUnavailable: "Could not read iTerm2 preferences."
+    case .selectedProfileUnavailable: "iTerm2 has no readable selected color profile."
+    case .colorUnavailable(let name): "The iTerm2 profile is missing its \(name) color."
+    }
+  }
+}
+
+enum ITermProfileImporter {
+  static var availability: Result<String, ITermProfileImportError> {
+    guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.googlecode.iterm2") != nil
+    else { return .failure(.unavailable) }
+    do {
+      let profile = try selectedProfile()
+      return .success((profile["Name"] as? String) ?? "selected profile")
+    } catch let error as ITermProfileImportError {
+      return .failure(error)
+    } catch {
+      return .failure(.preferencesUnavailable)
+    }
+  }
+
+  static func selectedPalette() throws -> TerminalColorPalette {
+    let profile = try selectedProfile()
+    var palette = TerminalColorPalette.iTermDark
+    palette.background = try rgb(named: "Background", in: profile)
+    palette.foreground = try rgb(named: "Foreground", in: profile)
+    palette.cursor = try optionalRGB(named: "Cursor", in: profile) ?? palette.cursor
+    palette.cursorText = try optionalRGB(named: "Cursor Text", in: profile) ?? palette.cursorText
+    palette.selectionBackground = try optionalRGB(named: "Selection", in: profile)
+      ?? palette.selectionBackground
+    palette.ansiColors = try (0..<16).map { index in
+      try rgb(named: "Ansi \(index)", in: profile)
+    }
+    return palette
+  }
+
+  private static func selectedProfile() throws -> [String: Any] {
+    guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.googlecode.iterm2") != nil
+    else { throw ITermProfileImportError.unavailable }
+    let preferencesURL = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Preferences/com.googlecode.iterm2.plist")
+    guard let data = try? Data(contentsOf: preferencesURL),
+      let root = try? PropertyListSerialization.propertyList(from: data, format: nil),
+      let preferences = root as? [String: Any],
+      let profiles = preferences["New Bookmarks"] as? [[String: Any]], !profiles.isEmpty
+    else { throw ITermProfileImportError.preferencesUnavailable }
+    if let guid = preferences["Default Bookmark Guid"] as? String,
+      let profile = profiles.first(where: { ($0["Guid"] as? String) == guid })
+    { return profile }
+    if profiles.count == 1, let profile = profiles.first { return profile }
+    throw ITermProfileImportError.selectedProfileUnavailable
+  }
+
+  private static func rgb(named name: String, in profile: [String: Any]) throws -> TerminalRGB {
+    guard let color = try optionalRGB(named: name, in: profile) else {
+      throw ITermProfileImportError.colorUnavailable(name)
+    }
+    return color
+  }
+
+  private static func optionalRGB(named name: String, in profile: [String: Any]) throws -> TerminalRGB? {
+    guard let components = profile["\(name) Color"] as? [String: Any] else { return nil }
+    func component(_ key: String) -> Double? {
+      if let value = components[key] as? NSNumber { return value.doubleValue }
+      if let value = components[key] as? String { return Double(value) }
+      return nil
+    }
+    guard let red = component("Red Component"), let green = component("Green Component"),
+      let blue = component("Blue Component")
+    else { throw ITermProfileImportError.colorUnavailable(name) }
+    func byte(_ value: Double) -> UInt8 {
+      let normalized = value > 1 ? value / 255 : value
+      return UInt8((normalized * 255).rounded().clamped(to: 0...255))
+    }
+    return TerminalRGB(red: byte(red), green: byte(green), blue: byte(blue))
   }
 }

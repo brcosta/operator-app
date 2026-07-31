@@ -230,11 +230,8 @@ enum PaneNotificationPolicy: String, Codable, CaseIterable, Identifiable {
 }
 
 struct AgentPaneMetadata: Codable, Hashable {
-  var checkpoint: String? = nil
   var notificationPolicy: PaneNotificationPolicy = .all
   var isAwaitingReview = false
-
-  var hasCheckpoint: Bool { checkpoint?.isEmpty == false }
 }
 
 struct Workspace: Codable, Hashable, Identifiable {

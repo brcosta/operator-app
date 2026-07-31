@@ -76,20 +76,20 @@ struct TerminalPreferencesTests {
     #expect(terminal.disableFullRedrawOnAnyChanges)
   }
 
-  @Test func darkTerminalPaletteMatchesItermTangoProfile() {
+  @Test func darkTerminalPaletteMatchesRequestedItermProfile() {
     let palette = TerminalColorPalette.iTermDark
 
-    #expect(palette.background.hex == 0x000000)
-    #expect(palette.foreground.hex == 0xDEDEDE)
+    #expect(palette.background.hex == 0x14181D)
+    #expect(palette.foreground.hex == 0xC6C6C6)
     #expect(palette.cursor.hex == 0xFFFFFF)
     #expect(palette.cursorText.hex == 0x000000)
-    #expect(palette.selectionBackground.hex == 0xB5D5FF)
+    #expect(palette.selectionBackground.hex == 0xBAD6FC)
     #expect(
       palette.ansiColors.map(\.hex) == [
-        0x000000, 0xCC0000, 0x4E9A06, 0xC4A000,
-        0x3465A4, 0x75507B, 0x06989A, 0xD3D7CF,
-        0x555753, 0xEF2929, 0x8AE234, 0xFCE94F,
-        0x729FCF, 0xAD7FA8, 0x34E2E2, 0xEEEEEC,
+        0x14191D, 0xA74532, 0x57BF38, 0xC7C43F,
+        0x2E43C0, 0xB249B8, 0x59C2C5, 0xC7C7C7,
+        0x686868, 0xD07F78, 0x81E398, 0xEAE14A,
+        0xA7AAED, 0xD482DC, 0x8EFAFD, 0xFFFFFF,
       ])
   }
 
@@ -113,6 +113,19 @@ struct TerminalPreferencesTests {
   @Test func terminalPaletteFollowsTheInterfaceColorScheme() {
     #expect(TerminalColorPalette.default(for: .dark) == .iTermDark)
     #expect(TerminalColorPalette.default(for: .light) == .paperLight)
+  }
+
+  @Test func customDarkPalettePersistsAndDoesNotChangeTheLightPalette() throws {
+    var custom = TerminalColorPalette.iTermDark
+    custom.background = TerminalRGB(hex: 0x112233)
+    custom.ansiColors[1] = TerminalRGB(hex: 0xAABBCC)
+    let preferences = TerminalPreferences(darkColorPalette: custom)
+
+    let restored = try JSONDecoder().decode(
+      TerminalPreferences.self, from: JSONEncoder().encode(preferences))
+    #expect(restored.darkColorPalette == custom)
+    #expect(TerminalColorPalette.resolved(for: .dark, preferences: restored) == custom)
+    #expect(TerminalColorPalette.resolved(for: .light, preferences: restored) == .paperLight)
   }
 
   @MainActor
@@ -156,6 +169,29 @@ struct TerminalPreferencesTests {
     #expect(!intent.isPending)
   }
 
+  @Test func selectedTerminalFallbackOwnsPlainInputWithoutHijackingFieldsOrCommands() {
+    #expect(
+      TerminalKeyboardFallbackPolicy.shouldForward(
+        isOwner: true, isKeyWindow: true, hasAttachedSheet: false,
+        firstResponderIsTextInput: false, usesCommandModifier: false))
+    #expect(
+      !TerminalKeyboardFallbackPolicy.shouldForward(
+        isOwner: false, isKeyWindow: true, hasAttachedSheet: false,
+        firstResponderIsTextInput: false, usesCommandModifier: false))
+    #expect(
+      !TerminalKeyboardFallbackPolicy.shouldForward(
+        isOwner: true, isKeyWindow: true, hasAttachedSheet: false,
+        firstResponderIsTextInput: true, usesCommandModifier: false))
+    #expect(
+      !TerminalKeyboardFallbackPolicy.shouldForward(
+        isOwner: true, isKeyWindow: true, hasAttachedSheet: false,
+        firstResponderIsTextInput: false, usesCommandModifier: true))
+    #expect(
+      !TerminalKeyboardFallbackPolicy.shouldForward(
+        isOwner: true, isKeyWindow: true, hasAttachedSheet: true,
+        firstResponderIsTextInput: false, usesCommandModifier: false))
+  }
+
   @MainActor
   @Test func launchingATerminalQueuesFocusBeforeItsNativeViewMounts() throws {
     let directory = try TestSupport.temporaryDirectory()
@@ -169,6 +205,61 @@ struct TerminalPreferencesTests {
     let session = try #require(controller.sessions.first)
     #expect(controller.selectedSessionID == session.id)
     #expect(session.keyboardFocusIntent.isPending)
+  }
+
+  @MainActor
+  @Test func staleOutgoingTabCannotDetachTerminalFromIncomingTab() {
+    let terminal = OperatorTerminalView(frame: .zero)
+    let outgoing = TerminalContainerView(frame: .init(x: 0, y: 0, width: 320, height: 240))
+    let incoming = TerminalContainerView(frame: .init(x: 0, y: 0, width: 640, height: 480))
+
+    outgoing.mount(terminal)
+    #expect(terminal.superview === outgoing)
+
+    incoming.mount(terminal)
+    #expect(terminal.superview === incoming)
+    #expect(terminal.frame == incoming.bounds)
+
+    // SwiftUI may dismantle the old representable after the replacement is already visible.
+    outgoing.unmountIfOwned(terminal)
+    #expect(terminal.superview === incoming)
+
+    incoming.unmountIfOwned(terminal)
+    #expect(terminal.superview == nil)
+  }
+
+  @MainActor
+  @Test func cachedTerminalContainerCanRemountAcrossRepeatedProjectVisits() {
+    let terminal = OperatorTerminalView(frame: .zero)
+    let cached = TerminalContainerView(frame: .init(x: 0, y: 0, width: 640, height: 480))
+
+    for _ in 0..<3 {
+      cached.mount(terminal)
+      #expect(terminal.superview === cached)
+      #expect(cached.mountedTerminal === terminal)
+      cached.unmountIfOwned(terminal)
+      #expect(terminal.superview == nil)
+    }
+
+    cached.mount(terminal)
+    #expect(terminal.superview === cached)
+  }
+
+  @MainActor
+  @Test func fallbackFocusMakesTerminalTheActualFirstResponderForEnhancedInput() throws {
+    let window = NSWindow(
+      contentRect: .init(x: 0, y: 0, width: 640, height: 480),
+      styleMask: [.titled], backing: .buffered, defer: false)
+    let terminal = OperatorTerminalView(frame: window.contentView?.bounds ?? .zero)
+    window.contentView?.addSubview(terminal)
+    let competingControl = NSButton(title: "Tab", target: nil, action: nil)
+    window.contentView?.addSubview(competingControl)
+    window.makeKeyAndOrderFront(nil)
+    #expect(window.makeFirstResponder(competingControl))
+    #expect(window.firstResponder === competingControl)
+
+    #expect(terminal.takeKeyboardFocus())
+    #expect(window.firstResponder === terminal)
   }
 
   @MainActor
