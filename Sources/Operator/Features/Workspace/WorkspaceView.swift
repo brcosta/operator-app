@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private struct TabRenameTarget: Identifiable {
   let projectID: UUID
@@ -11,7 +12,8 @@ enum OperatorMotion {
   static let quickDuration = 0.16
   static let standardDuration = 0.22
   static let toastDuration = 0.26
-  static let recoveryToastAutoDismissSeconds: UInt64 = 5
+  static let recoveryToastAutoDismissSeconds: UInt64 = 3
+  static let recoveryToastTicksPerSecond = 10
   static let sidebarTransitionOffset: CGFloat = -5
   static let toastMaximumWidth: CGFloat = 620
 
@@ -26,6 +28,18 @@ enum OperatorMotion {
   static func toast(reduceMotion: Bool) -> Animation? {
     reduceMotion ? nil : .easeOut(duration: toastDuration)
   }
+
+  static func remainingRecoveryToastTicks(_ ticks: Int, isHovered: Bool) -> Int {
+    isHovered ? max(0, ticks) : max(0, ticks - 1)
+  }
+}
+
+enum OperatorAlertActionStyle {
+  // SwiftUI renders destructive alert actions as red text on the standard gray macOS
+  // button surface. That combination is difficult to read in dark mode, so modal
+  // confirmations communicate risk through their explicit labels and messages while
+  // retaining the native high-contrast alert button foreground.
+  static let destructiveRole: ButtonRole? = nil
 }
 
 struct WorkspaceView: View {
@@ -40,6 +54,8 @@ struct WorkspaceView: View {
   @State private var shortcutsVisible = false
   @State private var resumeTarget: TerminalSession?
   @State private var splitPaneTarget: SplitPaneTarget?
+  @AppStorage("operator.fileNavigatorVisible") private var fileNavigatorVisible = false
+  @State private var recoveryToastHovered = false
 
   init(controller: WorkspaceController) {
     self.controller = controller
@@ -48,6 +64,10 @@ struct WorkspaceView: View {
 
   private var selectedProject: Project? {
     store.state.projects.first { $0.id == store.state.selectedProjectID }
+  }
+
+  private var selectedProjectRoot: String? {
+    selectedProject?.workspaces.first?.directory
   }
 
   @ViewBuilder private var reliabilityToast: some View {
@@ -73,31 +93,51 @@ struct WorkspaceView: View {
       SidebarView(store: store, controller: controller)
         .navigationSplitViewColumnWidth(min: 235, ideal: 255, max: 320)
     } detail: {
-      ZStack(alignment: .top) {
-        VStack(spacing: 0) {
-          if hasOpenContent {
-            sessionTabs
-              .transition(.opacity.combined(with: .move(edge: .top)))
-            Divider()
-              .transition(.opacity)
+      HStack(spacing: 0) {
+        ZStack(alignment: .top) {
+          VStack(spacing: 0) {
+            if hasOpenContent {
+              sessionTabs
+                .transition(.opacity.combined(with: .move(edge: .top)))
+              Divider()
+                .transition(.opacity)
+            }
+            terminalArea
           }
-          terminalArea
+          .animation(
+            OperatorMotion.standard(reduceMotion: reduceMotion), value: hasOpenContent)
+          reliabilityToast
+            .frame(maxWidth: OperatorMotion.toastMaximumWidth)
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .onHover { recoveryToastHovered = $0 }
+            .transition(
+              .move(edge: .top)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.98, anchor: .top))
+            )
+            .zIndex(20)
         }
         .animation(
-          OperatorMotion.standard(reduceMotion: reduceMotion), value: hasOpenContent)
-        reliabilityToast
-          .frame(maxWidth: OperatorMotion.toastMaximumWidth)
-          .padding(.horizontal, 14)
-          .padding(.top, 12)
-          .transition(
-            .move(edge: .top)
-              .combined(with: .opacity)
-              .combined(with: .scale(scale: 0.98, anchor: .top))
+          OperatorMotion.toast(reduceMotion: reduceMotion), value: store.persistenceMessage
+        )
+        .animation(OperatorMotion.toast(reduceMotion: reduceMotion), value: store.recoveryMessage)
+
+        if fileNavigatorVisible, let root = selectedProjectRoot {
+          Divider()
+          ProjectFileNavigator(
+            root: root,
+            openFile: controller.openFile,
+            close: { fileNavigatorVisible = false },
+            fileWatchingEnabled: store.state.integrationPreferences.fileWatchingEnabled
           )
-          .zIndex(20)
+          .frame(width: 290)
+          .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
       }
-      .animation(OperatorMotion.toast(reduceMotion: reduceMotion), value: store.persistenceMessage)
-      .animation(OperatorMotion.toast(reduceMotion: reduceMotion), value: store.recoveryMessage)
+      .animation(
+        OperatorMotion.standard(reduceMotion: reduceMotion), value: fileNavigatorVisible
+      )
       .toolbar {
         ToolbarItemGroup(placement: .primaryAction) {
           if selectedProject != nil {
@@ -117,6 +157,15 @@ struct WorkspaceView: View {
             .operatorShortcut(controller.store.shortcut(for: .activity))
             .help("Show Agent Activity")
             .accessibilityIdentifier("operator.activity")
+            Button {
+              fileNavigatorVisible.toggle()
+            } label: {
+              Label(
+                fileNavigatorVisible ? "Hide Files" : "Show Files",
+                systemImage: "sidebar.trailing")
+            }
+            .help(fileNavigatorVisible ? "Hide file navigator" : "Show file navigator")
+            .accessibilityIdentifier("operator.fileNavigator.toggle")
           }
           if let selectedSession = controller.selectedSession {
             Button {
@@ -126,16 +175,6 @@ struct WorkspaceView: View {
             }
             .operatorShortcut(controller.store.shortcut(for: .taskBrief))
             .help("Edit Task Brief")
-            if controller.canSplitFocusedPane {
-              Menu {
-                Button("Split Horizontally") { controller.splitFocusedTerminal(.horizontal) }
-                Button("Split Vertically") { controller.splitFocusedTerminal(.vertical) }
-              } label: {
-                Label("Split", systemImage: "rectangle.split.2x1")
-              }
-              .operatorShortcut(controller.store.shortcut(for: .splitPane))
-              .help("Split the focused pane")
-            }
             if controller.sessions.count >= 2 {
               Button {
                 controller.missionControlLayout()
@@ -183,6 +222,16 @@ struct WorkspaceView: View {
               .help("Focus next pane")
             }
           }
+          if controller.canSplitFocusedPane {
+            Menu {
+              Button("Split Horizontally") { controller.splitFocusedTerminal(.horizontal) }
+              Button("Split Vertically") { controller.splitFocusedTerminal(.vertical) }
+            } label: {
+              Label("Split", systemImage: "rectangle.split.2x1")
+            }
+            .operatorShortcut(controller.store.shortcut(for: .splitPane))
+            .help("Split the focused pane")
+          }
           Button {
             shortcutsVisible = true
           } label: {
@@ -214,7 +263,11 @@ struct WorkspaceView: View {
       ActivityTimelineView(
         controller: controller, setNotificationsEnabled: controller.setNotificationsEnabled)
     }
-    .sheet(isPresented: $shortcutsVisible) { ShortcutSettingsView(store: controller.store) }
+    .sheet(isPresented: $shortcutsVisible) {
+      ShortcutSettingsView(
+        store: controller.store, applyIntegrationPreferences: controller.applyIntegrationPreferences
+      )
+    }
     .sheet(item: $resumeTarget) { session in
       ResumeIdentifierSheet(controller: controller, session: session)
     }
@@ -226,13 +279,19 @@ struct WorkspaceView: View {
     }
     .task(id: store.recoveryMessage) {
       guard store.recoveryMessage != nil else { return }
-      do {
-        try await Task.sleep(
-          nanoseconds: OperatorMotion.recoveryToastAutoDismissSeconds * 1_000_000_000)
-      } catch {
-        return
+      var remainingTicks =
+        Int(OperatorMotion.recoveryToastAutoDismissSeconds)
+        * OperatorMotion.recoveryToastTicksPerSecond
+      while remainingTicks > 0 {
+        do {
+          try await Task.sleep(nanoseconds: 100_000_000)
+        } catch {
+          return
+        }
+        guard !Task.isCancelled, store.recoveryMessage != nil else { return }
+        remainingTicks = OperatorMotion.remainingRecoveryToastTicks(
+          remainingTicks, isHovered: recoveryToastHovered)
       }
-      guard !Task.isCancelled else { return }
       withAnimation(OperatorMotion.toast(reduceMotion: reduceMotion)) {
         store.dismissRecoveryMessage()
       }
@@ -250,7 +309,7 @@ struct WorkspaceView: View {
       "Close this active terminal?",
       isPresented: Binding(get: { closeTarget != nil }, set: { if !$0 { closeTarget = nil } })
     ) {
-      Button("Terminate and Close", role: .destructive) {
+      Button("Terminate and Close", role: OperatorAlertActionStyle.destructiveRole) {
         if let session = closeTarget { controller.close(session) }
         closeTarget = nil
       }
@@ -266,7 +325,7 @@ struct WorkspaceView: View {
         get: { controller.exitClosePromptSession != nil },
         set: { if !$0 { controller.dismissExitClosePrompt() } })
     ) {
-      Button("Close Pane", role: .destructive) {
+      Button("Close Pane", role: OperatorAlertActionStyle.destructiveRole) {
         if let session = controller.exitClosePromptSession { controller.close(session) }
         controller.dismissExitClosePrompt()
       }
@@ -274,6 +333,45 @@ struct WorkspaceView: View {
     } message: {
       if let session = controller.exitClosePromptSession {
         Text("\(session.title) exited with code \(session.exitCode ?? -1). Close its pane?")
+      }
+    }
+    .alert(
+      controller.notificationPermissionPrompt == .denied
+        ? "Enable Operator notifications" : "Allow notifications?",
+      isPresented: Binding(
+        get: { controller.notificationPermissionPrompt != nil },
+        set: { if !$0 { controller.dismissNotificationPermissionPrompt() } })
+    ) {
+      if controller.notificationPermissionPrompt == .denied {
+        Button("Open System Settings") { controller.openNotificationSystemSettings() }
+        Button("Not Now", role: .cancel) { controller.dismissNotificationPermissionPrompt() }
+      } else {
+        Button("Enable Notifications") {
+          controller.dismissNotificationPermissionPrompt()
+          controller.setNotificationsEnabled(true)
+        }
+        Button("Not Now", role: .cancel) { controller.dismissNotificationPermissionPrompt() }
+      }
+    } message: {
+      Text(
+        controller.notificationPermissionPrompt == .denied
+          ? "Notifications are disabled for Operator. Open System Settings, choose Notifications, and enable Operator."
+          : "Operator can notify you when a harness asks a question, finishes work, or needs attention."
+      )
+    }
+    .alert(
+      "File was deleted",
+      isPresented: Binding(
+        get: { controller.deletedOpenFilePrompt != nil },
+        set: { if !$0 { controller.dismissDeletedOpenFilePrompt() } })
+    ) {
+      Button("Close Pane", role: OperatorAlertActionStyle.destructiveRole) {
+        controller.closeDeletedOpenFilePrompt()
+      }
+      Button("Keep Open", role: .cancel) { controller.dismissDeletedOpenFilePrompt() }
+    } message: {
+      if let prompt = controller.deletedOpenFilePrompt {
+        Text("“\(prompt.title)” no longer exists. Close this pane?")
       }
     }
   }
@@ -298,7 +396,15 @@ struct WorkspaceView: View {
       HStack(spacing: 4) {
         Menu {
           Button("Start Codex") { controller.launchQuickHarness(.codex) }
+            .disabled(!HarnessInstallation.isInstalled(.codex))
+            .help(
+              HarnessInstallation.isInstalled(.codex)
+                ? "Start Codex" : HarnessInstallation.unavailableHelp(for: .codex))
           Button("Start Claude Code") { controller.launchQuickHarness(.claudeCode) }
+            .disabled(!HarnessInstallation.isInstalled(.claudeCode))
+            .help(
+              HarnessInstallation.isInstalled(.claudeCode)
+                ? "Start Claude Code" : HarnessInstallation.unavailableHelp(for: .claudeCode))
           Divider()
           Button("Custom Command…") { paletteVisible = true }
           if !recentCustomCommands.isEmpty {
@@ -324,14 +430,25 @@ struct WorkspaceView: View {
         ForEach(controller.tabs) { tab in
           let session = controller.session(for: tab)
           let activity = controller.outputActivity(for: tab)
+          let paneState = session.map { controller.paneState(for: $0) }
+          let questionCount = controller.questionCount(for: tab)
           Button {
             controller.selectTab(tab.id)
           } label: {
             HStack(spacing: 6) {
-              TerminalTabActivityIndicator(
-                activity: activity, status: session?.status, accentColor: .accentColor)
-              HarnessIdentityMark(kind: session?.request.harness ?? .generic)
+              if !tab.layout.terminalIDs.isEmpty {
+                TerminalTabActivityIndicator(
+                  activity: activity, status: session?.status, paneState: paneState,
+                  accentColor: .accentColor)
+                HarnessIdentityMark(kind: session?.request.harness ?? .generic)
+              } else {
+                Image(systemName: tabSymbol(tab))
+                  .foregroundStyle(.secondary)
+              }
               Text(tab.title).lineLimit(1)
+              if questionCount > 0 {
+                QuestionBadge(count: questionCount)
+              }
               if session?.status == .failed {
                 Image(systemName: "exclamationmark.triangle.fill")
                   .font(.caption2)
@@ -355,20 +472,25 @@ struct WorkspaceView: View {
           )
           .accessibilityIdentifier("operator.session")
           .accessibilityLabel(
-            "\(tab.title), \(sessionStatusDescription(session?.status)) terminal session, \(controller.outputActivityDescription(for: tab))"
+            "\(tab.title), \(tabContentDescription(tab, session: session)), \(controller.outputActivityDescription(for: tab))\(questionCount > 0 ? ", \(questionCount) unanswered questions" : "")"
           )
-          .help(
-            "\(session?.request.harness.displayName ?? "Terminal") · \(sessionStatusDescription(session?.status)) · \(controller.outputActivityDescription(for: tab))"
+          .help(tabHelp(tab, session: session, questionCount: questionCount))
+          .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+              if let projectID = store.state.selectedProjectID {
+                renameTabTarget = TabRenameTarget(projectID: projectID, tab: tab)
+              }
+            }
           )
           .contextMenu {
+            Button("Rename Tab…") {
+              if let projectID = store.state.selectedProjectID {
+                renameTabTarget = TabRenameTarget(projectID: projectID, tab: tab)
+              }
+            }
             if let session = controller.session(for: tab) {
               Button("Duplicate") { controller.duplicate(session) }
               Button("Restart") { controller.restart(session) }
-              Button("Rename Tab…") {
-                if let projectID = store.state.selectedProjectID {
-                  renameTabTarget = TabRenameTarget(projectID: projectID, tab: tab)
-                }
-              }
               if session.request.harness == .codex {
                 Button("Set Codex Resume ID…") { resumeTarget = session }
               }
@@ -378,27 +500,14 @@ struct WorkspaceView: View {
               }
               Divider()
               Button("Close Focused Pane", role: .destructive) { closeTarget = session }
+            } else if let paneID = tab.focusedPaneID ?? tab.layout.firstPaneID {
+              Divider()
+              Button("Close Pane", role: .destructive) {
+                controller.closeContentPane(paneID)
+              }
             }
           }
           .transition(.opacity.combined(with: .scale(scale: 0.97)))
-        }
-        ForEach(controller.markdownDocuments) { document in
-          Button {
-            controller.selectedMarkdownPath = document.path
-          } label: {
-            HStack(spacing: 6) {
-              Image(systemName: "doc.richtext")
-              Text(document.title).lineLimit(1)
-              Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).onTapGesture {
-                controller.closeMarkdown(document)
-              }
-            }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(
-              document.path == controller.selectedMarkdownPath
-                ? Color.accentColor.opacity(0.17) : .clear, in: Capsule())
-          }
-          .buttonStyle(.plain)
         }
         ForEach(controller.artifacts) { artifact in
           Button {
@@ -406,8 +515,9 @@ struct WorkspaceView: View {
             controller.selectedMarkdownPath = nil
           } label: {
             HStack(spacing: 6) {
-              Image(systemName: "shippingbox")
+              Image(systemName: artifact.symbolName)
               Text(artifact.title).lineLimit(1)
+              if artifact.isPinned { Image(systemName: "pin.fill").font(.caption2) }
               Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).onTapGesture {
                 controller.closeArtifact(artifact)
               }
@@ -416,7 +526,35 @@ struct WorkspaceView: View {
             .background(
               artifact.id == controller.selectedArtifactID
                 ? Color.accentColor.opacity(0.17) : .clear, in: Capsule())
-          }.buttonStyle(.plain)
+          }
+          .buttonStyle(.plain)
+          .contextMenu {
+            Button("Reveal source terminal") { controller.revealArtifactSource(artifact) }
+            Button(artifact.isPinned ? "Unpin" : "Pin") {
+              controller.setArtifactPinned(artifact, pinned: !artifact.isPinned)
+            }
+            Menu("Attach to session") {
+              Button("No attachment") { controller.attachArtifact(artifact, to: nil) }
+              ForEach(controller.sessions) { session in
+                Button(session.title) { controller.attachArtifact(artifact, to: session) }
+              }
+            }
+            Divider()
+            Button("Reveal in Finder") {
+              NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: artifact.path)])
+            }
+            Button("Copy path") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(artifact.path, forType: .string)
+            }
+            Button("Open externally") {
+              NSWorkspace.shared.open(URL(fileURLWithPath: artifact.path))
+            }
+            Divider()
+            Button("Remove from workspace", role: .destructive) {
+              controller.closeArtifact(artifact)
+            }
+          }
         }
       }
       .padding(8)
@@ -439,12 +577,48 @@ struct WorkspaceView: View {
     }
   }
 
+  private func tabSymbol(_ tab: WorkspaceTab) -> String {
+    switch tab.contentKind {
+    case .terminal: "terminal"
+    case .markdown: "doc.richtext"
+    case .file: "doc.text"
+    case .mixed: "rectangle.split.2x1"
+    case .empty: "rectangle.dashed"
+    }
+  }
+
+  private func tabContentDescription(_ tab: WorkspaceTab, session: TerminalSession?) -> String {
+    switch tab.contentKind {
+    case .terminal:
+      return
+        "\(session?.request.harness.displayName ?? "Terminal"), \(sessionStatusDescription(session?.status))"
+    case .markdown: return "Markdown document"
+    case .file: return "Source file"
+    case .mixed: return "Mixed split layout"
+    case .empty: return "Empty pane"
+    }
+  }
+
+  private func tabHelp(
+    _ tab: WorkspaceTab, session: TerminalSession?, questionCount: Int
+  ) -> String {
+    var parts = [
+      tabContentDescription(tab, session: session),
+      "\(tab.layout.paneIDs.count) \(tab.layout.paneIDs.count == 1 ? "pane" : "panes")",
+    ]
+    if !tab.layout.terminalIDs.isEmpty {
+      parts.append(controller.outputActivityDescription(for: tab))
+    }
+    if questionCount > 0 {
+      parts.append("\(questionCount) unanswered \(questionCount == 1 ? "question" : "questions")")
+    }
+    return parts.joined(separator: " · ")
+  }
+
   @ViewBuilder private var terminalArea: some View {
     if let artifact = controller.artifacts.first(where: { $0.id == controller.selectedArtifactID })
     {
       ArtifactView(artifact: artifact)
-    } else if let document = controller.selectedMarkdownDocument {
-      MarkdownDocumentView(document: document)
     } else if let zoomed = controller.zoomedSessionID,
       let session = controller.sessions.first(where: { $0.id == zoomed })
     {
@@ -499,16 +673,33 @@ private struct EmptyWorkspaceLauncher: View {
               symbol: project == nil ? "terminal.fill" : "play.fill",
               color: project?.accent.color ?? .accentColor, size: 58)
             VStack(spacing: 7) {
+              if project == nil {
+                Text("TERMINALS  •  AGENTS  •  WORKSPACES")
+                  .font(.caption.weight(.semibold))
+                  .tracking(1.1)
+                  .foregroundStyle(Color.accentColor)
+                  .accessibilityIdentifier("operator.onboarding.eyebrow")
+              }
               Text(project == nil ? "Build your command center" : "Ready when you are")
                 .font(.system(size: 28, weight: .bold, design: .rounded))
+                .accessibilityIdentifier("operator.onboarding.title")
               Text(
                 project == nil
-                  ? "Group terminal sessions, coding harnesses, and agent activity around each project."
+                  ? "One calm workspace for every terminal, coding agent, and artifact you need to ship."
                   : "Start a focused harness or run any command in this workspace."
               )
               .foregroundStyle(.secondary)
               .multilineTextAlignment(.center)
               .frame(maxWidth: 590)
+              if project == nil {
+                Text(
+                  "Operator keeps your sessions alive, your layouts ready, and your next action close at hand."
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
+              }
             }
             if project == nil {
               Button(action: addProject) {
@@ -533,12 +724,16 @@ private struct EmptyWorkspaceLauncher: View {
               ) {
                 EmptyPaneAction(
                   title: "Codex", subtitle: "Coding agent",
-                  harness: .codex, color: .blue
+                  harness: .codex, color: .blue,
+                  isEnabled: HarnessInstallation.isInstalled(.codex),
+                  disabledReason: HarnessInstallation.unavailableHelp(for: .codex)
                 ) { startHarness(.codex) }
                 .accessibilityIdentifier("operator.emptyWorkspace.startCodex")
                 EmptyPaneAction(
                   title: "Claude Code", subtitle: "Coding agent",
-                  harness: .claudeCode, color: .green
+                  harness: .claudeCode, color: .green,
+                  isEnabled: HarnessInstallation.isInstalled(.claudeCode),
+                  disabledReason: HarnessInstallation.unavailableHelp(for: .claudeCode)
                 ) { startHarness(.claudeCode) }
                 .accessibilityIdentifier("operator.emptyWorkspace.startClaude")
                 EmptyPaneAction(
@@ -561,16 +756,38 @@ private struct EmptyWorkspaceLauncher: View {
           .operatorCardSurface()
 
           if project == nil {
-            HStack(spacing: 12) {
+            LazyVGrid(
+              columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12
+            ) {
               OperatorFeatureCard(
-                symbol: "rectangle.split.3x1", title: "Persistent layouts",
-                detail: "Return to project tabs and split geometry automatically.")
+                symbol: "rectangle.split.3x1", title: "Persistent workspaces",
+                detail:
+                  "Return to project tabs, split panes, and running sessions exactly where you left them."
+              )
               OperatorFeatureCard(
-                symbol: "person.2.badge.gearshape", title: "Agent supervision",
-                detail: "See progress, questions, failures, and generated artifacts.")
+                symbol: "person.2.badge.gearshape", title: "Agent control",
+                detail:
+                  "Supervise Codex and Claude, answer questions, retry failures, and keep context in one place."
+              )
               OperatorFeatureCard(
-                symbol: "bell.badge", title: "Useful notifications",
-                detail: "Know when a harness needs input or a command fails.")
+                symbol: "doc.richtext", title: "Native artifacts",
+                detail:
+                  "Preview Markdown, JSON, diffs, logs, and generated files beside the session that produced them."
+              )
+              OperatorFeatureCard(
+                symbol: "bell.badge", title: "Helpful by default",
+                detail:
+                  "Get notified when work needs you, while keeping every optional integration under your control."
+              )
+            }
+            .frame(maxWidth: 860)
+            .accessibilityIdentifier("operator.onboarding.features")
+            HStack(spacing: 0) {
+              OnboardingStep(number: "1", title: "Add a project", detail: "Choose a folder")
+              OnboardingStep(
+                number: "2", title: "Start a session", detail: "Use a harness or shell")
+              OnboardingStep(
+                number: "3", title: "Stay in flow", detail: "Resume whenever you return")
             }
             .frame(maxWidth: 860)
           }
@@ -589,6 +806,32 @@ private struct EmptyWorkspaceLauncher: View {
         withAnimation(.easeOut(duration: 0.28)) { appeared = true }
       }
     }
+  }
+}
+
+private struct OnboardingStep: View {
+  let number: String
+  let title: String
+  let detail: String
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text(number)
+        .font(.caption.weight(.bold))
+        .foregroundStyle(.tint)
+        .frame(width: 24, height: 24)
+        .background(Color.accentColor.opacity(0.12), in: Circle())
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).font(.caption.weight(.semibold))
+        Text(detail).font(.caption2).foregroundStyle(.secondary)
+      }
+      if number != "3" {
+        Spacer(minLength: 8)
+        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, 12).padding(.vertical, 9)
   }
 }
 
@@ -615,21 +858,90 @@ private struct PaneStatusBar: View {
   @ObservedObject var session: TerminalSession
   let close: () -> Void
   @State private var answerTarget: HarnessQuestion?
+  @State private var isEditingCheckpoint = false
+  @State private var checkpointDraft = ""
 
   var body: some View {
     let question = controller.questions.first { $0.sessionID == session.id }
+    let paneState = controller.paneState(for: session)
+    let metadata = controller.paneMetadata(for: session)
     HStack(spacing: 8) {
       HarnessIdentityMark(kind: session.request.harness)
-      Label(session.title, systemImage: session.status == .running ? "circle.fill" : "circle")
-        .foregroundStyle(session.status == .running ? .green : .secondary)
+      Label(session.title, systemImage: paneState.symbolName)
+        .foregroundStyle(paneState.tint)
         .lineLimit(1)
       Text(URL(fileURLWithPath: session.request.directory).lastPathComponent)
         .foregroundStyle(.secondary).lineLimit(1)
+      Button {
+        if session.isResourcePaused {
+          controller.resume(session)
+        } else {
+          controller.pause(session)
+        }
+      } label: {
+        Label(
+          session.resourceSnapshot.summary,
+          systemImage: session.isResourcePaused
+            ? "pause.circle.fill" : session.resourceSnapshot.network.symbolName
+        )
+        .lineLimit(1)
+        .foregroundStyle(session.resourceSnapshot.isRunaway ? .red : .secondary)
+      }
+      .buttonStyle(.plain)
+      .help(
+        session.isResourcePaused
+          ? "Resume this process" : "Pause this process. \(session.resourceSnapshot.summary)"
+      )
+      .contextMenu {
+        if session.isResourcePaused {
+          Button("Resume process") { controller.resume(session) }
+        } else {
+          Button("Pause process") { controller.pause(session) }
+        }
+        if session.resourceSnapshot.isRunaway {
+          Divider()
+          Button("Kill runaway process", role: .destructive) { controller.killRunaway(session) }
+        }
+      }
       if let branch = controller.lastGitBranch(forSessionID: session.id) {
         Label(branch, systemImage: "arrow.triangle.branch")
           .foregroundStyle(.secondary).lineLimit(1)
       }
       SessionRadarButton(files: session.changedFiles)
+      Menu {
+        Button("Set checkpoint…") {
+          checkpointDraft = metadata.checkpoint ?? ""
+          isEditingCheckpoint = true
+        }
+        if metadata.hasCheckpoint {
+          Button("Clear checkpoint", role: .destructive) {
+            controller.setPaneCheckpoint(nil, for: session)
+          }
+        }
+        if paneState == .awaitingReview {
+          Button("Mark review complete") { controller.markPaneReviewed(session) }
+        }
+        Divider()
+        Menu("Notification policy") {
+          ForEach(PaneNotificationPolicy.allCases) { policy in
+            Button {
+              controller.setPaneNotificationPolicy(policy, for: session)
+            } label: {
+              if metadata.notificationPolicy == policy {
+                Label(policy.title, systemImage: "checkmark")
+              } else {
+                Text(policy.title)
+              }
+            }
+            .help(policy.detail)
+          }
+        }
+      } label: {
+        Image(systemName: metadata.hasCheckpoint ? "bookmark.fill" : "slider.horizontal.3")
+          .foregroundStyle(metadata.hasCheckpoint ? Color.accentColor : .secondary)
+      }
+      .menuStyle(.borderlessButton)
+      .help("Pane checkpoint and notification policy")
       Spacer()
       if let question {
         Button {
@@ -658,6 +970,55 @@ private struct PaneStatusBar: View {
         controller.answerQuestion(question, answer: answer)
       }
     }
+    .sheet(isPresented: $isEditingCheckpoint) {
+      PaneCheckpointSheet(
+        checkpoint: $checkpointDraft,
+        save: {
+          controller.setPaneCheckpoint(checkpointDraft, for: session)
+          isEditingCheckpoint = false
+        },
+        cancel: { isEditingCheckpoint = false })
+    }
+  }
+}
+
+extension AgentPaneState {
+  fileprivate var tint: Color {
+    switch self {
+    case .running: .green
+    case .needsAnswer: .orange
+    case .changedFiles: .blue
+    case .failed: .red
+    case .awaitingReview: .purple
+    case .idle: .secondary
+    }
+  }
+}
+
+private struct PaneCheckpointSheet: View {
+  @Binding var checkpoint: String
+  let save: () -> Void
+  let cancel: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Label("Pane checkpoint", systemImage: "bookmark")
+        .font(.title3.weight(.semibold))
+      Text("Keep a concise note about the next safe handoff or review point.")
+        .foregroundStyle(.secondary)
+      TextField(
+        "For example, review the migration before merging", text: $checkpoint, axis: .vertical
+      )
+      .lineLimit(3...6)
+      .textFieldStyle(.roundedBorder)
+      HStack {
+        Spacer()
+        Button("Cancel", action: cancel)
+        Button("Save", action: save).keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(24)
+    .frame(width: 440)
   }
 }
 
@@ -681,6 +1042,23 @@ private struct TerminalLayoutView: View {
             controller.selectTerminal(id)
           })
       }
+    case .markdown(let paneID, let path, let workspaceDirectory):
+      MarkdownPaneContainer(
+        paneID: paneID, path: path, workspaceDirectory: workspaceDirectory,
+        isFocused: controller.selectedPaneID == paneID,
+        select: { controller.selectContentPane(paneID) },
+        close: { controller.closeContentPane(paneID) },
+        onDeleted: { controller.reportOpenFileMissing(paneID: paneID, path: path) },
+        fileWatchingEnabled: controller.store.state.integrationPreferences.fileWatchingEnabled)
+    case .file(let paneID, let filePath, let workspaceDirectory):
+      ProjectFileViewer(
+        path: filePath, workspaceDirectory: workspaceDirectory,
+        isFocused: controller.selectedPaneID == paneID,
+        select: { controller.selectContentPane(paneID) },
+        close: { controller.closeContentPane(paneID) },
+        openMarkdown: { controller.openMarkdown(filePath) },
+        onDeleted: { controller.reportOpenFileMissing(paneID: paneID, path: filePath) },
+        fileWatchingEnabled: controller.store.state.integrationPreferences.fileWatchingEnabled)
     case .empty(let paneID):
       EmptySplitPane(
         startHarness: { controller.launchQuickHarness($0, intoPane: paneID) },
@@ -705,6 +1083,52 @@ private struct TerminalLayoutView: View {
             openCustomLauncher: openCustomLauncher, requestClose: requestClose)
         })
     }
+  }
+}
+
+private struct MarkdownPaneContainer: View {
+  let paneID: UUID
+  let path: String
+  let workspaceDirectory: String
+  let isFocused: Bool
+  let select: () -> Void
+  let close: () -> Void
+  let onDeleted: () -> Void
+  let fileWatchingEnabled: Bool
+  @StateObject private var document: MarkdownDocument
+
+  init(
+    paneID: UUID, path: String, workspaceDirectory: String, isFocused: Bool,
+    select: @escaping () -> Void, close: @escaping () -> Void,
+    onDeleted: @escaping () -> Void, fileWatchingEnabled: Bool
+  ) {
+    self.paneID = paneID
+    self.path = path
+    self.workspaceDirectory = workspaceDirectory
+    self.isFocused = isFocused
+    self.select = select
+    self.close = close
+    self.onDeleted = onDeleted
+    self.fileWatchingEnabled = fileWatchingEnabled
+    _document = StateObject(
+      wrappedValue: MarkdownDocument(
+        path: path, allowedDirectory: workspaceDirectory, watchForChanges: fileWatchingEnabled))
+  }
+
+  var body: some View {
+    MarkdownDocumentView(document: document, close: close)
+      .contentShape(Rectangle())
+      .onTapGesture(perform: select)
+      .paneFocusIndicator(isFocused, color: .accentColor)
+      .onAppear(perform: reportDeletionIfNeeded)
+      .onChange(of: document.errorMessage) { _, _ in reportDeletionIfNeeded() }
+      .onChange(of: isFocused) { _, _ in reportDeletionIfNeeded() }
+      .onChange(of: fileWatchingEnabled) { _, enabled in document.setWatching(enabled) }
+  }
+
+  private func reportDeletionIfNeeded() {
+    guard isFocused, !FileManager.default.fileExists(atPath: path) else { return }
+    onDeleted()
   }
 }
 
@@ -751,6 +1175,18 @@ private struct TerminalPaneView: View {
       }
     }
     .paneFocusIndicator(isFocused, color: focusColor)
+    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+      for provider in providers {
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+          let url =
+            (item as? URL)
+            ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+          guard let url else { return }
+          Task { @MainActor in controller.insertDroppedPaths([url], into: session) }
+        }
+      }
+      return !providers.isEmpty
+    }
   }
 
   private var terminalSurface: some View {
@@ -941,11 +1377,15 @@ private struct EmptySplitPane: View {
             EmptyPaneAction(
               title: "Codex", subtitle: "Coding agent",
               harness: .codex,
-              color: .blue
+              color: .blue,
+              isEnabled: HarnessInstallation.isInstalled(.codex),
+              disabledReason: HarnessInstallation.unavailableHelp(for: .codex)
             ) { startHarness(.codex) }
             EmptyPaneAction(
               title: "Claude Code", subtitle: "Coding agent", harness: .claudeCode,
-              color: .green
+              color: .green,
+              isEnabled: HarnessInstallation.isInstalled(.claudeCode),
+              disabledReason: HarnessInstallation.unavailableHelp(for: .claudeCode)
             ) { startHarness(.claudeCode) }
             EmptyPaneAction(
               title: "Terminal", subtitle: "Your default shell", symbol: "terminal",
@@ -979,6 +1419,8 @@ private struct EmptyPaneAction: View {
   var symbol: String? = nil
   var harness: HarnessKind? = nil
   let color: Color
+  var isEnabled = true
+  var disabledReason: String? = nil
   let action: () -> Void
 
   var body: some View {
@@ -1008,11 +1450,14 @@ private struct EmptyPaneAction: View {
       }
     }
     .buttonStyle(.plain)
+    .disabled(!isEnabled)
+    .opacity(isEnabled ? 1 : 0.52)
+    .help(isEnabled ? "\(title): \(subtitle)" : (disabledReason ?? "\(title) is unavailable"))
   }
 }
 
 extension View {
-  fileprivate func paneFocusIndicator(_ isFocused: Bool, color: Color) -> some View {
+  func paneFocusIndicator(_ isFocused: Bool, color: Color) -> some View {
     overlay {
       Rectangle()
         .strokeBorder(color, lineWidth: isFocused ? 1 : 0)
@@ -1092,9 +1537,30 @@ enum TerminalTabActivityVisualState: Equatable {
   }
 }
 
+private struct QuestionBadge: View {
+  let count: Int
+
+  var body: some View {
+    HStack(spacing: 3) {
+      Image(systemName: "questionmark.bubble.fill")
+      if count > 1 {
+        Text("\(count)").monospacedDigit()
+      }
+    }
+    .font(.caption2.bold())
+    .foregroundStyle(Color.white)
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .background(Color.orange, in: Capsule())
+    .accessibilityLabel(
+      "\(count) unanswered \(count == 1 ? "question" : "questions")")
+  }
+}
+
 private struct TerminalTabActivityIndicator: View {
   let activity: SessionOutputActivity
   let status: SessionStatus?
+  let paneState: AgentPaneState?
   let accentColor: Color
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1122,8 +1588,9 @@ private struct TerminalTabActivityIndicator: View {
         .opacity(visualState == .producingOutput ? 1 : 0)
         .scaleEffect(visualState == .producingOutput ? 1 : 0.82)
 
-      Circle()
-        .fill(statusColor)
+      Image(systemName: paneState?.symbolName ?? "circle.fill")
+        .font(.system(size: 9, weight: .bold))
+        .foregroundStyle(paneState?.tint ?? statusColor)
         .frame(width: 7, height: 7)
         .opacity(visualState == .idle ? 1 : 0)
         .scaleEffect(visualState == .idle ? 1 : 0.82)
@@ -1131,6 +1598,7 @@ private struct TerminalTabActivityIndicator: View {
     .frame(width: 12, height: 12)
     .animation(OperatorMotion.quick(reduceMotion: reduceMotion), value: activity)
     .animation(OperatorMotion.quick(reduceMotion: reduceMotion), value: status)
+    .animation(OperatorMotion.quick(reduceMotion: reduceMotion), value: paneState)
     .accessibilityHidden(true)
   }
 
@@ -1152,15 +1620,23 @@ private struct SidebarView: View {
   @State private var renameProject: Project?
   @State private var renameTabTarget: TabRenameTarget?
   @State private var appearanceProject: Project?
+  @State private var sidebarFilter = ""
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
+        TextField("Filter projects and tabs", text: $sidebarFilter)
+          .textFieldStyle(.roundedBorder)
+          .padding(.horizontal, 4)
+          .padding(.bottom, 10)
+          .accessibilityIdentifier("operator.sidebar.filter")
         sidebarSectionHeader("Projects")
-        let sidebarProjects = store.sidebarProjects
+        let sidebarProjects = filteredSidebarProjects
         ForEach(Array(sidebarProjects.enumerated()), id: \.element.id) { index, project in
-          let projectTabs = controller.tabs(forProjectID: project.id)
-          let isExpanded = !projectTabs.isEmpty && store.isProjectExpanded(project.id)
+          let projectTabs = filteredTabs(for: project)
+          let isExpanded =
+            !projectTabs.isEmpty
+            && (store.isProjectExpanded(project.id) || !normalizedSidebarFilter.isEmpty)
 
           VStack(alignment: .leading, spacing: 0) {
             projectRow(project, hasTabs: !projectTabs.isEmpty)
@@ -1174,6 +1650,8 @@ private struct SidebarView: View {
                 Divider()
                 Button("Remove from Sidebar") { controller.hideProjectFromSidebar(project.id) }
               }
+              .simultaneousGesture(
+                TapGesture(count: 2).onEnded { renameProject = project })
 
             if isExpanded {
               VStack(alignment: .leading, spacing: 0) {
@@ -1195,7 +1673,15 @@ private struct SidebarView: View {
           }
         }
 
-        if !store.state.profiles.isEmpty {
+        if sidebarProjects.isEmpty {
+          ContentUnavailableView(
+            "No matches", systemImage: "line.3.horizontal.decrease.circle",
+            description: Text("Try another project or tab name.")
+          )
+          .padding(.top, 28)
+        }
+
+        if normalizedSidebarFilter.isEmpty, !store.state.profiles.isEmpty {
           sidebarSectionHeader("Launch profiles")
             .padding(.top, 8)
           ForEach(store.state.profiles) { profile in
@@ -1276,6 +1762,40 @@ private struct SidebarView: View {
     }
   }
 
+  private var normalizedSidebarFilter: String {
+    sidebarFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var filteredSidebarProjects: [Project] {
+    guard !normalizedSidebarFilter.isEmpty else { return store.sidebarProjects }
+    return store.sidebarProjects.filter { project in
+      project.name.localizedCaseInsensitiveContains(normalizedSidebarFilter)
+        || project.workspaces.contains {
+          $0.directory.localizedCaseInsensitiveContains(normalizedSidebarFilter)
+        }
+        || controller.tabs(forProjectID: project.id).contains {
+          $0.title.localizedCaseInsensitiveContains(normalizedSidebarFilter)
+            || controller.session(for: $0)?.request.harness.displayName
+              .localizedCaseInsensitiveContains(normalizedSidebarFilter) == true
+        }
+    }
+  }
+
+  private func filteredTabs(for project: Project) -> [WorkspaceTab] {
+    let tabs = controller.tabs(forProjectID: project.id)
+    guard !normalizedSidebarFilter.isEmpty,
+      !project.name.localizedCaseInsensitiveContains(normalizedSidebarFilter),
+      !project.workspaces.contains(where: {
+        $0.directory.localizedCaseInsensitiveContains(normalizedSidebarFilter)
+      })
+    else { return tabs }
+    return tabs.filter {
+      $0.title.localizedCaseInsensitiveContains(normalizedSidebarFilter)
+        || controller.session(for: $0)?.request.harness.displayName
+          .localizedCaseInsensitiveContains(normalizedSidebarFilter) == true
+    }
+  }
+
   private func sidebarSectionHeader(_ title: String) -> some View {
     Text(title)
       .font(.caption.weight(.semibold))
@@ -1313,6 +1833,10 @@ private struct SidebarView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .contentShape(Rectangle())
       Spacer(minLength: 6)
+      let questionCount = controller.questionCount(forProjectID: project.id)
+      if questionCount > 0 {
+        QuestionBadge(count: questionCount)
+      }
       let paneCount = controller.activePaneCount(for: project.id)
       if paneCount > 0 {
         Text("\(paneCount)")
@@ -1368,6 +1892,8 @@ private struct SidebarView: View {
       store.state.selectedProjectID == project.id && controller.selectedTabID == tab.id
     let session = controller.session(for: tab)
     let activity = controller.outputActivity(for: tab)
+    let paneState = session.map { controller.paneState(for: $0) }
+    let questionCount = controller.questionCount(for: tab)
     return VStack(spacing: 0) {
       Button {
         controller.selectTab(tab.id, inProject: project.id)
@@ -1376,12 +1902,23 @@ private struct SidebarView: View {
           RoundedRectangle(cornerRadius: 2)
             .fill(isSelected ? project.accent.color : .clear)
             .frame(width: 3, height: 18)
-          TerminalTabActivityIndicator(
-            activity: activity, status: session?.status, accentColor: project.accent.color)
+          if !tab.layout.terminalIDs.isEmpty {
+            TerminalTabActivityIndicator(
+              activity: activity, status: session?.status, paneState: paneState,
+              accentColor: project.accent.color)
+          } else {
+            Image(systemName: sidebarTabSymbol(tab))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .frame(width: 12, height: 12)
+          }
           Text(tab.title)
             .font(.callout.weight(.medium))
             .lineLimit(1)
           Spacer(minLength: 4)
+          if questionCount > 0 {
+            QuestionBadge(count: questionCount)
+          }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, SidebarProjectGroupLayout.tabVerticalPadding)
@@ -1398,6 +1935,11 @@ private struct SidebarView: View {
       )
       .accessibilityLabel(tabAccessibilityLabel(tab, session: session))
       .help(tabHelp(tab, project: project, session: session))
+      .simultaneousGesture(
+        TapGesture(count: 2).onEnded {
+          renameTabTarget = TabRenameTarget(projectID: project.id, tab: tab)
+        }
+      )
       .contextMenu {
         Button("Rename Tab…") {
           renameTabTarget = TabRenameTarget(projectID: project.id, tab: tab)
@@ -1408,11 +1950,14 @@ private struct SidebarView: View {
 
   private func projectAccessibilityLabel(_ project: Project) -> String {
     let paneCount = controller.activePaneCount(for: project.id)
+    let questionCount = controller.questionCount(forProjectID: project.id)
     let directory = project.workspaces.first?.directory ?? "No workspace"
     let branch = controller.lastGitBranch(forProjectID: project.id)
     return [
       project.name,
       paneCount == 1 ? "1 active pane" : "\(paneCount) active panes",
+      questionCount > 0
+        ? "\(questionCount) unanswered \(questionCount == 1 ? "question" : "questions")" : nil,
       directory,
       branch.map { "Git branch \($0)" },
     ]
@@ -1421,20 +1966,63 @@ private struct SidebarView: View {
   }
 
   private func tabAccessibilityLabel(_ tab: WorkspaceTab, session: TerminalSession?) -> String {
-    let paneCount = tab.layout.terminalIDs.count
+    let paneCount = tab.layout.paneIDs.count
+    let questionCount = controller.questionCount(for: tab)
+    let paneState = session.map { controller.paneState(for: $0) }
     return [
       tab.title,
-      sessionStatusDescription(session?.status),
-      controller.outputActivityDescription(for: tab),
+      sidebarTabContentDescription(tab, session: session),
+      tab.layout.terminalIDs.isEmpty ? nil : controller.outputActivityDescription(for: tab),
+      paneState?.title,
       paneCount == 1 ? "1 pane" : "\(paneCount) panes",
       session?.request.harness.displayName,
+      questionCount > 0
+        ? "\(questionCount) unanswered \(questionCount == 1 ? "question" : "questions")" : nil,
     ]
     .compactMap { $0 }
     .joined(separator: ", ")
   }
 
   private func tabHelp(_ tab: WorkspaceTab, project: Project, session: TerminalSession?) -> String {
-    "\(project.name) · \(session?.request.harness.displayName ?? "Terminal") · \(sessionStatusDescription(session?.status)) · \(controller.outputActivityDescription(for: tab)) · \(tab.layout.terminalIDs.count) \(tab.layout.terminalIDs.count == 1 ? "pane" : "panes")"
+    let paneCount = tab.layout.paneIDs.count
+    let paneState = session.map { controller.paneState(for: $0) }
+    var parts = [
+      project.name, sidebarTabContentDescription(tab, session: session),
+      "\(paneCount) \(paneCount == 1 ? "pane" : "panes")",
+    ]
+    if !tab.layout.terminalIDs.isEmpty {
+      parts.append(controller.outputActivityDescription(for: tab))
+      if let paneState { parts.append(paneState.title) }
+    }
+    let questionCount = controller.questionCount(for: tab)
+    if questionCount > 0 {
+      parts.append("\(questionCount) unanswered")
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  private func sidebarTabSymbol(_ tab: WorkspaceTab) -> String {
+    switch tab.contentKind {
+    case .terminal: "terminal"
+    case .markdown: "doc.richtext"
+    case .file: "doc.text"
+    case .mixed: "rectangle.split.2x1"
+    case .empty: "rectangle.dashed"
+    }
+  }
+
+  private func sidebarTabContentDescription(
+    _ tab: WorkspaceTab, session: TerminalSession?
+  ) -> String {
+    switch tab.contentKind {
+    case .terminal:
+      return
+        "\(session?.request.harness.displayName ?? "Terminal"), \(sessionStatusDescription(session?.status))"
+    case .markdown: return "Markdown"
+    case .file: return "Source file"
+    case .mixed: return "Mixed split layout"
+    case .empty: return "Empty pane"
+    }
   }
 
   private func sessionStatusDescription(_ status: SessionStatus?) -> String {

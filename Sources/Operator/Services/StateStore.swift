@@ -270,6 +270,68 @@ final class StateStore: ObservableObject {
     save()
   }
 
+  func paneMetadata(for sessionID: UUID) -> AgentPaneMetadata {
+    state.agentPaneMetadata[sessionID] ?? AgentPaneMetadata()
+  }
+
+  func setPaneCheckpoint(_ checkpoint: String?, for sessionID: UUID) {
+    var metadata = paneMetadata(for: sessionID)
+    let cleaned = checkpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+    metadata.checkpoint = cleaned?.isEmpty == false ? cleaned : nil
+    state.agentPaneMetadata[sessionID] = metadata
+    save()
+  }
+
+  func setPaneNotificationPolicy(_ policy: PaneNotificationPolicy, for sessionID: UUID) {
+    var metadata = paneMetadata(for: sessionID)
+    guard metadata.notificationPolicy != policy else { return }
+    metadata.notificationPolicy = policy
+    state.agentPaneMetadata[sessionID] = metadata
+    save()
+  }
+
+  func setPaneAwaitingReview(_ awaitingReview: Bool, for sessionID: UUID) {
+    var metadata = paneMetadata(for: sessionID)
+    guard metadata.isAwaitingReview != awaitingReview else { return }
+    metadata.isAwaitingReview = awaitingReview
+    state.agentPaneMetadata[sessionID] = metadata
+    save()
+  }
+
+  func upsertArtifact(_ artifact: ArtifactDescriptor) {
+    if let index = state.artifacts.firstIndex(where: {
+      $0.path == artifact.path && $0.sessionID == artifact.sessionID
+    }) {
+      let prior = state.artifacts[index]
+      var updated = artifact
+      updated.id = prior.id
+      updated.isPinned = prior.isPinned
+      updated.attachedSessionID = prior.attachedSessionID
+      state.artifacts[index] = updated
+    } else {
+      state.artifacts.insert(artifact, at: 0)
+    }
+    state.artifacts = Array(state.artifacts.prefix(500))
+    save()
+  }
+
+  func setArtifactPinned(_ pinned: Bool, id: UUID) {
+    guard let index = state.artifacts.firstIndex(where: { $0.id == id }) else { return }
+    state.artifacts[index].isPinned = pinned
+    save()
+  }
+
+  func attachArtifact(_ id: UUID, to sessionID: UUID?) {
+    guard let index = state.artifacts.firstIndex(where: { $0.id == id }) else { return }
+    state.artifacts[index].attachedSessionID = sessionID
+    save()
+  }
+
+  func removeArtifact(_ id: UUID) {
+    state.artifacts.removeAll { $0.id == id }
+    save()
+  }
+
   func recordFinish(id: UUID, exitCode: Int32, failed: Bool = false) {
     guard let index = state.recentSessions.firstIndex(where: { $0.id == id }) else { return }
     state.recentSessions[index].endedAt = .now
@@ -321,6 +383,20 @@ final class StateStore: ObservableObject {
     save()
   }
 
+  func setIntegrationPreferences(_ preferences: OperatorIntegrationPreferences) {
+    guard state.integrationPreferences != preferences else { return }
+    state.integrationPreferences = preferences
+    if !preferences.notificationsPermitted { state.notificationsEnabled = false }
+    OperatorDebugLog.record(
+      "integrations.preferences.changed", "Updated optional Operator integrations",
+      metadata: [
+        "skills": String(preferences.skillsEnabled), "hooks": String(preferences.hooksEnabled),
+        "notificationsPermitted": String(preferences.notificationsPermitted),
+        "fileWatching": String(preferences.fileWatchingEnabled),
+      ])
+    save()
+  }
+
   func setPaneStatusBarPosition(_ position: PaneStatusBarPosition) {
     state.paneStatusBarPosition = position
     save()
@@ -333,11 +409,13 @@ final class StateStore: ObservableObject {
   }
 
   func setShortcut(_ shortcut: ShortcutBinding) {
-    guard !shortcut.key.isEmpty else { return }
-    if let index = state.shortcuts.firstIndex(where: { $0.action == shortcut.action }) {
-      state.shortcuts[index] = shortcut
+    guard let key = ShortcutKey.normalized(shortcut.key) else { return }
+    var normalized = shortcut
+    normalized.key = key
+    if let index = state.shortcuts.firstIndex(where: { $0.action == normalized.action }) {
+      state.shortcuts[index] = normalized
     } else {
-      state.shortcuts.append(shortcut)
+      state.shortcuts.append(normalized)
     }
     save()
   }
@@ -360,15 +438,21 @@ final class StateStore: ObservableObject {
 
   func removeSessionRecipe(_ id: UUID) {
     state.sessionRecipes.removeAll { $0.id == id }
+    state.agentPaneMetadata[id] = nil
     for projectID in state.projectLayouts.keys {
       state.projectLayouts[projectID] = state.projectLayouts[projectID]?.removing(id)
     }
     for projectID in state.projectTabs.keys {
       state.projectTabs[projectID] = state.projectTabs[projectID]?.compactMap { tab in
-        guard let layout = tab.layout.removing(id) else { return nil }
+        guard let layout = tab.layout.removing(id), !layout.contentPaneIDs.isEmpty else {
+          return nil
+        }
         var updated = tab
         updated.layout = layout
         if updated.focusedSessionID == id { updated.focusedSessionID = layout.firstTerminalID }
+        if updated.focusedPaneID == id {
+          updated.focusedPaneID = updated.focusedSessionID ?? layout.firstPaneID
+        }
         return updated
       }
       if let selected = state.selectedTabIDs[projectID],
@@ -424,7 +508,8 @@ final class StateStore: ObservableObject {
       profiles: state.profiles.map(Self.profileWithoutPersistedSecrets),
       shortcuts: state.shortcuts,
       notificationsEnabled: false,
-      terminalPreferences: state.terminalPreferences)
+      terminalPreferences: state.terminalPreferences,
+      integrationPreferences: state.integrationPreferences)
     try encoder.encode(configuration).write(to: url, options: .atomic)
     try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
   }
@@ -461,6 +546,10 @@ final class StateStore: ObservableObject {
     // Notifications are deliberately runtime-only. Importing configuration must never make the
     // next process touch UserNotifications before the operator explicitly opts in.
     state.notificationsEnabled = false
+    if let preferences = configuration.integrationPreferences {
+      state.integrationPreferences = preferences
+      if !preferences.notificationsPermitted { state.notificationsEnabled = false }
+    }
     if let preferences = configuration.terminalPreferences {
       state.terminalPreferences = preferences.normalized
     }
@@ -700,6 +789,10 @@ final class StateStore: ObservableObject {
         if let focused = tab.focusedSessionID, !tab.layout.contains(focused) {
           tab.focusedSessionID = tab.layout.firstTerminalID
           recordRepair("Repaired saved tab focus.")
+        }
+        if tab.focusedPaneID.map({ tab.layout.paneIDs.contains($0) }) != true {
+          tab.focusedPaneID = tab.focusedSessionID ?? tab.layout.firstPaneID
+          recordRepair("Repaired saved pane focus.")
         }
         return tab
       }

@@ -6,7 +6,7 @@ let package = Package(
   platforms: [.macOS(.v14)],
   products: [.executable(name: "Operator", targets: ["Operator"])],
   dependencies: [
-    .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.10.0"),
+    .package(path: "Vendor/SwiftTerm"),
     .package(
       url: "https://github.com/swiftlang/swift-cmark.git",
       revision: "0101bf2c6ff6a218f93150f340fe5ccf76d9f3aa"),

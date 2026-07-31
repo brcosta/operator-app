@@ -62,7 +62,34 @@ struct SessionFileRadarPresentation: Equatable {
   }
 }
 
+enum OperatorNotificationAuthorizationState: Equatable {
+  case notDetermined
+  case denied
+  case authorized
+  case provisional
+  case ephemeral
+  case unavailable
+
+  var permitsNotifications: Bool {
+    switch self {
+    case .authorized, .provisional, .ephemeral: true
+    case .notDetermined, .denied, .unavailable: false
+    }
+  }
+}
+
 enum OperatorNotifications {
+  enum Action: String, Sendable {
+    case focusQuestion = "operator.notification.focus-question"
+    case openFailedHarness = "operator.notification.open-failed-harness"
+    case retry = "operator.notification.retry"
+  }
+
+  private enum Category: String {
+    case question = "operator.notification.question"
+    case failedHarness = "operator.notification.failed-harness"
+  }
+
   @MainActor private static var isAvailable = true
   @MainActor private static var isActivated = false
 
@@ -70,6 +97,10 @@ enum OperatorNotifications {
   @discardableResult
   static func installDelegate(_ delegate: UNUserNotificationCenterDelegate) -> Bool {
     guard isAvailable else { return false }
+    if let error = OperatorSetNotificationCategories(notificationCategories()) {
+      recordFailure(error, operation: "categories")
+      return false
+    }
     guard let error = OperatorInstallNotificationDelegate(delegate) else { return true }
     recordFailure(error, operation: "delegate")
     return false
@@ -86,6 +117,32 @@ enum OperatorNotifications {
   @MainActor
   static func deactivate() {
     isActivated = false
+  }
+
+  @MainActor
+  static func authorizationState() async -> OperatorNotificationAuthorizationState {
+    guard isAvailable else { return .unavailable }
+    return await withCheckedContinuation { continuation in
+      OperatorGetNotificationAuthorizationStatus { status, error in
+        Task { @MainActor in
+          if let error {
+            recordFailure(error, operation: "settings")
+            continuation.resume(returning: .unavailable)
+            return
+          }
+          let state: OperatorNotificationAuthorizationState =
+            switch status {
+            case .notDetermined: .notDetermined
+            case .denied: .denied
+            case .authorized: .authorized
+            case .provisional: .provisional
+            case .ephemeral: .ephemeral
+            @unknown default: .unavailable
+            }
+          continuation.resume(returning: state)
+        }
+      }
+    }
   }
 
   @MainActor
@@ -167,6 +224,9 @@ enum OperatorNotifications {
       ? "Task needs attention: \(sessionTitle)" : "Task finished: \(sessionTitle)"
     content.body = "\(workspace) · \(failed ? "process error" : "exit code \(exitCode)")"
     content.userInfo = ["operatorSessionID": sessionID.uuidString]
+    if failed || exitCode != 0 {
+      content.categoryIdentifier = Category.failedHarness.rawValue
+    }
     content.sound = .default
     return content
   }
@@ -178,7 +238,31 @@ enum OperatorNotifications {
     content.title = "Question from \(sessionTitle)"
     content.body = message
     content.userInfo = ["operatorSessionID": sessionID.uuidString]
+    content.categoryIdentifier = Category.question.rawValue
     content.sound = .default
     return content
+  }
+
+  static func notificationCategories() -> Set<UNNotificationCategory> {
+    let focusQuestion = UNNotificationAction(
+      identifier: Action.focusQuestion.rawValue,
+      title: "Focus Question",
+      options: [.foreground])
+    let openFailedHarness = UNNotificationAction(
+      identifier: Action.openFailedHarness.rawValue,
+      title: "Open Failed Harness",
+      options: [.foreground])
+    let retry = UNNotificationAction(
+      identifier: Action.retry.rawValue,
+      title: "Retry",
+      options: [.foreground])
+    return [
+      UNNotificationCategory(
+        identifier: Category.question.rawValue, actions: [focusQuestion],
+        intentIdentifiers: [], options: []),
+      UNNotificationCategory(
+        identifier: Category.failedHarness.rawValue, actions: [openFailedHarness, retry],
+        intentIdentifiers: [], options: []),
+    ]
   }
 }

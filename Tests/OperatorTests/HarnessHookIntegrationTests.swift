@@ -5,6 +5,30 @@ import Testing
 
 @MainActor
 struct HarnessHookIntegrationTests {
+  @Test func harnessSkillsAndHooksCanBeOptedOutIndependently() throws {
+    let root = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(root) }
+    let request = LaunchRequest(
+      title: "Codex", command: "codex", directory: root.path, harness: .codex)
+
+    let noIntegrations = HarnessHookIntegration.prepare(
+      request, sessionID: UUID(),
+      preferences: OperatorIntegrationPreferences(
+        skillsEnabled: false, hooksEnabled: false, notificationsPermitted: true,
+        fileWatchingEnabled: true),
+      supportDirectory: root)
+    #expect(noIntegrations.command == "codex")
+
+    let skillOnly = HarnessHookIntegration.prepare(
+      request, sessionID: UUID(),
+      preferences: OperatorIntegrationPreferences(
+        skillsEnabled: true, hooksEnabled: false, notificationsPermitted: true,
+        fileWatchingEnabled: true),
+      supportDirectory: root)
+    #expect(skillOnly.command.contains("developer_instructions"))
+    #expect(!skillOnly.command.contains("hooks.SessionStart"))
+  }
+
   @Test func claudeUsesSessionScopedSettingsWithLifecycleHooks() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -24,6 +48,12 @@ struct HarnessHookIntegrationTests {
     #expect(hooks?["SessionStart"] != nil)
     #expect(hooks?["PreToolUse"] != nil)
     #expect(hooks?["Stop"] != nil)
+    let skill = root.appendingPathComponent(
+      "HarnessHooks/\(sessionID.uuidString)/operator-control.md")
+    let instructions = try String(contentsOf: skill, encoding: .utf8)
+    #expect(instructions == OperatorHarnessSkill.instructions)
+    #expect(prepared.command.contains("--append-system-prompt-file"))
+    #expect(prepared.command.contains(skill.path))
   }
 
   @Test func claudeHookPayloadRelaysOnlyItsValidatedSessionIdentifier() throws {
@@ -164,8 +194,20 @@ struct HarnessHookIntegrationTests {
     #expect(!prepared.command.contains("startup|resume|clear|compact"))
     #expect(prepared.command.contains("hooks.PreToolUse"))
     #expect(prepared.command.contains("hooks.Stop"))
+    #expect(prepared.command.contains("developer_instructions="))
+    #expect(prepared.command.contains("Operator control skill"))
     #expect(prepared.command.hasSuffix("--model user-choice"))
     #expect(!prepared.command.contains("model="))
+  }
+
+  @Test func operatorControlSkillDocumentsOnlySupportedSessionCommands() {
+    let instructions = OperatorHarnessSkill.instructions
+    #expect(instructions.contains("operator open <path.md>"))
+    #expect(instructions.contains("operator layout split-right"))
+    #expect(instructions.contains("operator question <message>"))
+    #expect(instructions.contains("operator artifact open <path> [kind]"))
+    #expect(instructions.contains("operator help"))
+    #expect(!instructions.contains("operator rename"))
   }
 
   @Test func failedCodexResumeFallsBackToAFreshHookedThreadInTheSamePane() throws {

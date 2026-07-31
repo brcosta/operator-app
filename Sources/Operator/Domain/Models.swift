@@ -162,6 +162,81 @@ enum PaneStatusBarPosition: String, Codable, CaseIterable, Identifiable {
   var title: String { rawValue.capitalized }
 }
 
+/// The user-facing state of an agent-native terminal pane. It is derived from live terminal and
+/// harness events, with explicit review state stored alongside the session recipe.
+enum AgentPaneState: String, Codable, CaseIterable, Identifiable {
+  case running
+  case needsAnswer
+  case changedFiles
+  case failed
+  case awaitingReview
+  case idle
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .running: "Running"
+    case .needsAnswer: "Needs answer"
+    case .changedFiles: "Changed files"
+    case .failed: "Failed"
+    case .awaitingReview: "Awaiting review"
+    case .idle: "Idle"
+    }
+  }
+
+  var symbolName: String {
+    switch self {
+    case .running: "waveform.path.ecg"
+    case .needsAnswer: "questionmark.bubble.fill"
+    case .changedFiles: "doc.badge.gearshape"
+    case .failed: "exclamationmark.triangle.fill"
+    case .awaitingReview: "eye.fill"
+    case .idle: "moon.fill"
+    }
+  }
+}
+
+enum PaneNotificationPolicy: String, Codable, CaseIterable, Identifiable {
+  case all
+  case attentionOnly
+  case muted
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .all: "All activity"
+    case .attentionOnly: "Attention only"
+    case .muted: "Muted"
+    }
+  }
+
+  var detail: String {
+    switch self {
+    case .all: "Questions, failures, and completed work"
+    case .attentionOnly: "Questions and failures"
+    case .muted: "No native notifications from this pane"
+    }
+  }
+
+  func permits(_ state: AgentPaneState) -> Bool {
+    switch self {
+    case .all: state != .idle
+    case .attentionOnly: state == .needsAnswer || state == .failed
+    case .muted: false
+    }
+  }
+}
+
+struct AgentPaneMetadata: Codable, Hashable {
+  var checkpoint: String? = nil
+  var notificationPolicy: PaneNotificationPolicy = .all
+  var isAwaitingReview = false
+
+  var hasCheckpoint: Bool { checkpoint?.isEmpty == false }
+}
+
 struct Workspace: Codable, Hashable, Identifiable {
   var id: UUID = UUID()
   var name: String
@@ -259,6 +334,49 @@ enum HarnessKind: String, Codable, Hashable, CaseIterable {
     if trimmed == "claude" || trimmed.hasPrefix("claude ") { return .claudeCode }
     if trimmed == "codex" || trimmed.hasPrefix("codex ") { return .codex }
     return .generic
+  }
+}
+
+enum HarnessInstallation {
+  static func commandName(for kind: HarnessKind) -> String? {
+    switch kind {
+    case .claudeCode: "claude"
+    case .codex: "codex"
+    case .generic: nil
+    }
+  }
+
+  static func executableURL(
+    for kind: HarnessKind, environment: [String: String] = ProcessInfo.processInfo.environment,
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    fileManager: FileManager = .default
+  ) -> URL? {
+    guard let command = commandName(for: kind) else { return nil }
+    let pathDirectories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    let commonDirectories = [
+      "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+      homeDirectory.appendingPathComponent(".local/bin").path,
+      homeDirectory.appendingPathComponent(".npm-global/bin").path,
+      homeDirectory.appendingPathComponent(".bun/bin").path,
+      homeDirectory.appendingPathComponent(".claude/local").path,
+    ]
+    var visited = Set<String>()
+    for directory in pathDirectories + commonDirectories where visited.insert(directory).inserted {
+      let candidate = URL(fileURLWithPath: directory, isDirectory: true)
+        .appendingPathComponent(command).standardizedFileURL
+      if fileManager.isExecutableFile(atPath: candidate.path) { return candidate }
+    }
+    return nil
+  }
+
+  static func isInstalled(_ kind: HarnessKind) -> Bool {
+    kind == .generic || executableURL(for: kind) != nil
+  }
+
+  static func unavailableHelp(for kind: HarnessKind) -> String {
+    guard let command = commandName(for: kind) else { return "" }
+    return
+      "\(kind.displayName) is unavailable because the “\(command)” command was not found in PATH or a standard user installation directory."
   }
 }
 
@@ -504,18 +622,23 @@ struct WorkspaceTab: Codable, Hashable, Identifiable {
   var title: String
   var layout: TerminalLayout
   var focusedSessionID: UUID?
+  var focusedPaneID: UUID?
   var splitRatios: [String: Double] = [:]
 
-  enum CodingKeys: String, CodingKey { case id, title, layout, focusedSessionID, splitRatios }
+  enum CodingKeys: String, CodingKey {
+    case id, title, layout, focusedSessionID, focusedPaneID, splitRatios
+  }
 
   init(
     id: UUID, title: String, layout: TerminalLayout, focusedSessionID: UUID?,
+    focusedPaneID: UUID? = nil,
     splitRatios: [String: Double] = [:]
   ) {
     self.id = id
     self.title = title
     self.layout = layout
     self.focusedSessionID = focusedSessionID
+    self.focusedPaneID = focusedPaneID ?? focusedSessionID ?? layout.firstPaneID
     self.splitRatios = splitRatios
   }
 
@@ -525,7 +648,42 @@ struct WorkspaceTab: Codable, Hashable, Identifiable {
     title = try container.decode(String.self, forKey: .title)
     layout = try container.decode(TerminalLayout.self, forKey: .layout)
     focusedSessionID = try container.decodeIfPresent(UUID.self, forKey: .focusedSessionID)
+    focusedPaneID =
+      try container.decodeIfPresent(UUID.self, forKey: .focusedPaneID)
+      ?? focusedSessionID ?? layout.firstPaneID
     splitRatios = try container.decodeIfPresent([String: Double].self, forKey: .splitRatios) ?? [:]
+  }
+}
+
+enum WorkspaceTabContentKind: Equatable {
+  case terminal
+  case markdown
+  case file
+  case mixed
+  case empty
+}
+
+extension WorkspaceTab {
+  var contentKind: WorkspaceTabContentKind {
+    let leaves = layout.panesInDisplayOrder
+    let hasTerminal = leaves.contains {
+      if case .terminal = $0 { return true }
+      return false
+    }
+    let hasMarkdown = leaves.contains {
+      if case .markdown = $0 { return true }
+      return false
+    }
+    let hasFile = leaves.contains {
+      if case .file = $0 { return true }
+      return false
+    }
+    let kinds = [hasTerminal, hasMarkdown, hasFile].filter { $0 }.count
+    if kinds > 1 { return .mixed }
+    if hasTerminal { return .terminal }
+    if hasMarkdown { return .markdown }
+    if hasFile { return .file }
+    return .empty
   }
 }
 
@@ -554,7 +712,7 @@ enum AppAppearancePreference: String, CaseIterable, Codable, Hashable, Identifia
 }
 
 struct PersistedState: Codable {
-  static let currentSchemaVersion = 10
+  static let currentSchemaVersion = 14
 
   var schemaVersion = currentSchemaVersion
   var projects: [Project] = []
@@ -575,12 +733,18 @@ struct PersistedState: Codable {
   var mainWindowLayout: OperatorWindowLayout?
   var appearance: AppAppearancePreference = .system
   var terminalPreferences: TerminalPreferences = .default
+  var integrationPreferences: OperatorIntegrationPreferences = .default
+  var agentPaneMetadata: [UUID: AgentPaneMetadata] = [:]
+  var artifacts: [ArtifactDescriptor] = []
 
   enum CodingKeys: String, CodingKey {
     case schemaVersion, projects, profiles, recentSessions, selectedProjectID, splitOrientation
     case taskBriefs, activity, notificationsEnabled, paneStatusBarPosition, shortcuts
     case sessionRecipes, projectLayouts, projectTabs, selectedTabIDs
-    case collapsedProjectIDs, mainWindowLayout, appearance, terminalPreferences
+    case collapsedProjectIDs, mainWindowLayout, appearance, terminalPreferences,
+      integrationPreferences
+    case agentPaneMetadata
+    case artifacts
   }
 
   init() {}
@@ -623,7 +787,25 @@ struct PersistedState: Codable {
     terminalPreferences =
       ((try? container.decodeIfPresent(TerminalPreferences.self, forKey: .terminalPreferences))
       ?? .default).normalized
+    integrationPreferences =
+      (try? container.decodeIfPresent(
+        OperatorIntegrationPreferences.self, forKey: .integrationPreferences))
+      ?? .default
+    agentPaneMetadata =
+      try container.decodeIfPresent([UUID: AgentPaneMetadata].self, forKey: .agentPaneMetadata)
+      ?? [:]
+    artifacts = try container.decodeLossyArray(ArtifactDescriptor.self, forKey: .artifacts)
   }
+}
+
+struct OperatorIntegrationPreferences: Codable, Hashable {
+  var skillsEnabled = true
+  var hooksEnabled = true
+  /// This is a durable opt-out. Runtime notification delivery remains off until macOS grants it.
+  var notificationsPermitted = true
+  var fileWatchingEnabled = true
+
+  static let `default` = OperatorIntegrationPreferences()
 }
 
 struct OperatorWindowLayout: Codable, Equatable {
@@ -643,6 +825,7 @@ struct OperatorConfiguration: Codable, Hashable {
   var shortcuts: [ShortcutBinding]
   var notificationsEnabled: Bool
   var terminalPreferences: TerminalPreferences?
+  var integrationPreferences: OperatorIntegrationPreferences?
 }
 
 enum WorkspaceFileAccessError: LocalizedError, Equatable {

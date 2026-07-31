@@ -5,6 +5,62 @@ import Testing
 
 @MainActor
 struct StateStoreTests {
+  @Test func integrationOptOutPreferencesPersistAndDisableRuntimeNotifications() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let stateURL = directory.appendingPathComponent("state.json")
+    let store = StateStore(fileURL: stateURL)
+    store.setNotificationsEnabled(true)
+    let preferences = OperatorIntegrationPreferences(
+      skillsEnabled: false, hooksEnabled: false, notificationsPermitted: false,
+      fileWatchingEnabled: false)
+
+    store.setIntegrationPreferences(preferences)
+
+    #expect(store.state.integrationPreferences == preferences)
+    #expect(!store.state.notificationsEnabled)
+    #expect(StateStore(fileURL: stateURL).state.integrationPreferences == preferences)
+  }
+
+  @Test func agentPaneMetadataPersistsCheckpointReviewAndNotificationPolicy() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let stateURL = directory.appendingPathComponent("state.json")
+    let store = StateStore(fileURL: stateURL)
+    let sessionID = UUID()
+
+    store.setPaneCheckpoint("Review the migration output", for: sessionID)
+    store.setPaneNotificationPolicy(.muted, for: sessionID)
+    store.setPaneAwaitingReview(true, for: sessionID)
+
+    let metadata = StateStore(fileURL: stateURL).paneMetadata(for: sessionID)
+    #expect(metadata.checkpoint == "Review the migration output")
+    #expect(metadata.notificationPolicy == .muted)
+    #expect(metadata.isAwaitingReview)
+    #expect(!metadata.notificationPolicy.permits(.failed))
+  }
+
+  @Test func artifactsPersistPinAndSessionAttachment() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let stateURL = directory.appendingPathComponent("state.json")
+    let store = StateStore(fileURL: stateURL)
+    let artifact = ArtifactDescriptor(
+      projectID: UUID(), sessionID: UUID(),
+      path: directory.appendingPathComponent("report.json").path,
+      workspaceDirectory: directory.path, kind: .json)
+
+    store.upsertArtifact(artifact)
+    store.setArtifactPinned(true, id: artifact.id)
+    let attachment = UUID()
+    store.attachArtifact(artifact.id, to: attachment)
+
+    let restored = try #require(StateStore(fileURL: stateURL).state.artifacts.first)
+    #expect(restored.isPinned)
+    #expect(restored.attachedSessionID == attachment)
+    #expect(restored.kind == .json)
+  }
+
   @Test func mountedRecoveryToastInjectionIsUnavailableOutsideUIStressTesting() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
@@ -506,5 +562,28 @@ struct StateStoreTests {
     #expect(
       reloaded.shortcut(for: .activity) == ShortcutBinding.defaults.first { $0.action == .activity }
     )
+  }
+
+  @Test func arrowShortcutsNormalizeAndPersistWithEveryModifier() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let stateURL = directory.appendingPathComponent("state.json")
+    let store = StateStore(fileURL: stateURL)
+    store.setShortcut(
+      .init(
+        action: .nextPane, key: "→", command: true, shift: true, option: true,
+        control: true))
+
+    let reloaded = StateStore(fileURL: stateURL)
+    let shortcut = reloaded.shortcut(for: .nextPane)
+    #expect(shortcut.key == ShortcutKey.rightArrow)
+    #expect(shortcut.keyDisplayName == "→")
+    #expect(shortcut.command)
+    #expect(shortcut.shift)
+    #expect(shortcut.option)
+    #expect(shortcut.control)
+    #expect(ShortcutKey.normalized("LEFT") == ShortcutKey.leftArrow)
+    #expect(ShortcutKey.normalized(" ↑ ") == ShortcutKey.upArrow)
+    #expect(ShortcutKey.normalized("downArrow") == ShortcutKey.downArrow)
   }
 }

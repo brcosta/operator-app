@@ -5,6 +5,162 @@ import Testing
 
 @MainActor
 struct WorkspaceControllerTests {
+  @Test func notificationAuthorizationRefreshPromptsOrActivatesSafely() async throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    let controller = WorkspaceController(store: store)
+    var activationCount = 0
+    controller.notificationAuthorizationHandler = {
+      activationCount += 1
+      return true
+    }
+    controller.notificationAuthorizationStatusHandler = { .notDetermined }
+
+    await controller.refreshNotificationAuthorization()
+    #expect(controller.notificationPermissionPrompt == .request)
+    #expect(!store.state.notificationsEnabled)
+
+    controller.notificationAuthorizationStatusHandler = { .authorized }
+    await controller.refreshNotificationAuthorization()
+    #expect(controller.notificationPermissionPrompt == nil)
+    #expect(store.state.notificationsEnabled)
+    #expect(activationCount == 1)
+
+    controller.notificationAuthorizationStatusHandler = { .denied }
+    await controller.refreshNotificationAuthorization()
+    #expect(controller.notificationPermissionPrompt == .denied)
+    #expect(!store.state.notificationsEnabled)
+  }
+
+  @Test func harnessTaskFinishedEventEmitsRoutableNotification() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    let projectID = store.addProject(name: "Notifications", directory: directory.path)
+    let project = try #require(store.state.projects.first)
+    let workspace = try #require(project.workspaces.first)
+    let controller = WorkspaceController(store: store)
+    controller.launch(
+      LaunchRequest(
+        title: "Harness", command: "/bin/cat", directory: directory.path,
+        projectID: projectID, workspaceID: workspace.id, harness: .codex))
+    let session = try #require(controller.selectedSession)
+    store.setNotificationsEnabled(true)
+    var notification: (String, UUID, String, Int32, Bool)?
+    controller.taskFinishedNotificationHandler = {
+      notification = ($0, $1, $2, $3, $4)
+    }
+
+    controller.receiveEvent(
+      HarnessEventEnvelope(
+        sessionID: session.id, kind: .taskFinished, message: "Finished implementation"))
+
+    #expect(controller.sessionProgress[session.id] == 1)
+    #expect(notification?.0 == "Harness")
+    #expect(notification?.1 == session.id)
+    #expect(notification?.2 == directory.lastPathComponent)
+    #expect(notification?.3 == 0)
+    #expect(notification?.4 == false)
+    controller.close(session)
+  }
+
+  @Test func paneNotificationPolicySuppressesOnlyThatPane() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    let controller = WorkspaceController(store: store)
+    controller.launch(LaunchRequest(title: "Muted", command: "/bin/cat", directory: directory.path))
+    let session = try #require(controller.selectedSession)
+    store.setNotificationsEnabled(true)
+    store.setPaneNotificationPolicy(.muted, for: session.id)
+    var notificationCount = 0
+    controller.questionNotificationHandler = { _, _, _ in notificationCount += 1 }
+
+    controller.receiveQuestion(sessionID: session.id, message: "Should I notify?")
+
+    #expect(notificationCount == 0)
+    store.setPaneNotificationPolicy(.attentionOnly, for: session.id)
+    controller.receiveQuestion(sessionID: session.id, message: "Now notify")
+    #expect(notificationCount == 1)
+    controller.close(session)
+  }
+
+  @Test func focusedDeletedFilePromptsAndCanCloseItsPane() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let file = directory.appendingPathComponent("tracked.clj")
+    try "(println :ready)".write(to: file, atomically: true, encoding: .utf8)
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    store.addProject(name: "Files", directory: directory.path)
+    let controller = WorkspaceController(store: store)
+
+    controller.openFile(file.path)
+    let paneID = try #require(controller.selectedPaneID)
+    try FileManager.default.removeItem(at: file)
+    controller.reportOpenFileMissing(paneID: paneID, path: file.path)
+
+    #expect(controller.deletedOpenFilePrompt?.paneID == paneID)
+    #expect(controller.deletedOpenFilePrompt?.title == "tracked.clj")
+    controller.closeDeletedOpenFilePrompt()
+    #expect(controller.deletedOpenFilePrompt == nil)
+    #expect(controller.tabs.isEmpty)
+  }
+
+  @Test func notificationRevealSwitchesProjectAndFocusesOriginatingSession() throws {
+    let root = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(root) }
+    let secondDirectory = root.appendingPathComponent("second", isDirectory: true)
+    try FileManager.default.createDirectory(at: secondDirectory, withIntermediateDirectories: true)
+    let store = StateStore(fileURL: root.appendingPathComponent("state.json"))
+    let firstID = store.addProject(name: "First", directory: root.path)
+    let secondID = store.addProject(name: "Second", directory: secondDirectory.path)
+    let controller = WorkspaceController(store: store)
+    let first = try #require(store.state.projects.first(where: { $0.id == firstID }))
+    let second = try #require(store.state.projects.first(where: { $0.id == secondID }))
+
+    controller.selectProject(firstID)
+    controller.launch(
+      LaunchRequest(
+        title: "Origin", command: "/bin/cat", directory: root.path,
+        projectID: firstID, workspaceID: first.workspaces[0].id))
+    let originID = try #require(controller.selectedSessionID)
+    controller.selectProject(secondID)
+    controller.launch(
+      LaunchRequest(
+        title: "Visible", command: "/bin/cat", directory: secondDirectory.path,
+        projectID: secondID, workspaceID: second.workspaces[0].id))
+
+    controller.revealSession(originID)
+
+    #expect(store.state.selectedProjectID == firstID)
+    #expect(controller.selectedSessionID == originID)
+    for session in controller.allSessions { controller.close(session) }
+  }
+
+  @Test func notificationRetryReplacesTheOriginatingSessionWithTheSameLaunchRequest() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    let projectID = store.addProject(name: "Retry", directory: directory.path)
+    let workspace = try #require(store.state.projects.first?.workspaces.first)
+    let controller = WorkspaceController(store: store)
+    controller.launch(
+      LaunchRequest(
+        title: "Recoverable", command: "/bin/cat", directory: directory.path,
+        projectID: projectID, workspaceID: workspace.id))
+    let previous = try #require(controller.selectedSession)
+
+    controller.retrySession(previous.id)
+
+    let replacement = try #require(controller.selectedSession)
+    #expect(replacement.id != previous.id)
+    #expect(replacement.request.command == "/bin/cat")
+    #expect(replacement.request.directory == directory.path)
+    #expect(controller.sessions.count == 1)
+    controller.close(replacement)
+  }
+
   @Test func notificationsRequireExplicitRuntimeAuthorization() async throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
@@ -797,6 +953,28 @@ struct WorkspaceControllerTests {
     #expect(controller.statusBarState.question?.sessionID == second.id)
   }
 
+  @Test func agentPaneStatePrioritizesQuestionsReviewOutputAndFailures() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    let controller = WorkspaceController(store: store)
+    controller.launch(LaunchRequest(title: "Agent", command: "/bin/cat", directory: directory.path))
+    let session = try #require(controller.selectedSession)
+
+    #expect(controller.paneState(for: session) == .idle)
+    controller.receiveEvent(HarnessEventEnvelope(sessionID: session.id, kind: .taskFinished))
+    #expect(controller.paneState(for: session) == .awaitingReview)
+    controller.receiveQuestion(sessionID: session.id, message: "Review this?")
+    #expect(controller.paneState(for: session) == .needsAnswer)
+    let question = try #require(controller.questions.first)
+    controller.answerQuestion(question, answer: "yes")
+    #expect(controller.paneState(for: session) == .awaitingReview)
+    controller.recordTerminalOutput(sessionID: session.id, isVisible: true)
+    #expect(controller.paneState(for: session) == .running)
+    session.didExit(code: 1)
+    #expect(controller.paneState(for: session) == .failed)
+  }
+
   @Test func revealingQuestionRoutesToHarnessWithoutResolvingIt() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }
@@ -892,6 +1070,93 @@ struct WorkspaceControllerTests {
     controller.closeMarkdown(try #require(controller.selectedMarkdownDocument))
     #expect(controller.selectedMarkdownPath == nil)
 
+  }
+
+  @Test func markdownAndSourceFilesArePersistedFirstClassProjectTabs() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let markdown = directory.appendingPathComponent("README.md")
+    let source = directory.appendingPathComponent("App.swift")
+    try "# Project".write(to: markdown, atomically: true, encoding: .utf8)
+    try "struct App {}".write(to: source, atomically: true, encoding: .utf8)
+    let stateURL = directory.appendingPathComponent("state.json")
+    let store = StateStore(fileURL: stateURL)
+    store.addProject(name: "Project", directory: directory.path)
+    let controller = WorkspaceController(store: store)
+
+    controller.openMarkdown(markdown.path)
+    #expect(controller.tabs.count == 1)
+    #expect(controller.tabs.first?.contentKind == .markdown)
+    #expect(controller.tabs.first?.layout.firstMarkdownPane?.path == markdown.path)
+
+    controller.openFile(source.path)
+    #expect(controller.tabs.count == 2)
+    #expect(controller.selectedTab?.contentKind == .file)
+    let sourcePaneID = try #require(controller.selectedTab?.layout.firstFilePane?.id)
+
+    let secondSource = directory.appendingPathComponent("Support.swift")
+    try "let supported = true".write(to: secondSource, atomically: true, encoding: .utf8)
+    controller.openFile(secondSource.path)
+    #expect(controller.tabs.count == 2)
+    #expect(controller.selectedTab?.layout.firstFilePane?.id == sourcePaneID)
+    #expect(controller.selectedTab?.layout.firstFilePane?.path == secondSource.path)
+
+    let reloaded = WorkspaceController(store: StateStore(fileURL: stateURL))
+    #expect(reloaded.tabs.count == 2)
+    #expect(reloaded.tabs.contains { $0.contentKind == .markdown })
+    #expect(
+      reloaded.tabs.contains {
+        $0.layout.firstFilePane?.path == secondSource.path
+      })
+  }
+
+  @Test func markdownCanFillAnEmptySplitBesideATerminal() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let markdown = directory.appendingPathComponent("notes.md")
+    try "# Notes".write(to: markdown, atomically: true, encoding: .utf8)
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    store.addProject(name: "Project", directory: directory.path)
+    let controller = WorkspaceController(store: store)
+    controller.launch(
+      LaunchRequest(title: "Shell", command: "cat", directory: directory.path))
+    let session = try #require(controller.sessions.first)
+
+    controller.splitFocusedTerminal(.vertical)
+    let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
+    controller.selectEmptyPane(emptyPaneID)
+    controller.openMarkdown(markdown.path)
+
+    #expect(controller.tabs.count == 1)
+    #expect(controller.selectedTab?.contentKind == .mixed)
+    #expect(controller.terminalLayout?.terminalIDs == [session.id])
+    #expect(controller.terminalLayout?.markdownPane(forPath: markdown.path)?.id == emptyPaneID)
+    #expect(controller.selectedPaneID == emptyPaneID)
+    controller.close(session)
+  }
+
+  @Test func questionBadgesCountPerTabAndProjectThenClearAfterAnswer() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    store.addProject(name: "Project", directory: directory.path)
+    let project = try #require(store.state.projects.first)
+    let controller = WorkspaceController(store: store)
+    controller.launch(
+      LaunchRequest(
+        title: "Agent", command: "cat", directory: directory.path, projectID: project.id,
+        workspaceID: project.workspaces.first?.id))
+    let session = try #require(controller.sessions.first)
+    let tab = try #require(controller.selectedTab)
+    controller.enqueueQuestion(sessionID: session.id, message: "Continue?")
+    let question = try #require(controller.questions.first)
+
+    #expect(controller.questionCount(for: tab) == 1)
+    #expect(controller.questionCount(forProjectID: project.id) == 1)
+    controller.answerQuestion(question, answer: "yes")
+    #expect(controller.questionCount(for: tab) == 0)
+    #expect(controller.questionCount(forProjectID: project.id) == 0)
+    controller.close(session)
   }
 
   @Test func duplicateRestartAndCloseKeepSessionAndLayoutStateConsistent() throws {

@@ -42,6 +42,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   @Published private(set) var status: SessionStatus = .running
   @Published private(set) var exitCode: Int32?
   @Published private(set) var changedFiles: [GitChangedFile] = []
+  @Published private(set) var resourceSnapshot = ProcessResourceSnapshot.unavailable
+  @Published private(set) var isResourcePaused = false
 
   fileprivate var terminalView: LocalProcessTerminalView?
   fileprivate var terminalDelegate: TerminalHost.Coordinator?
@@ -50,6 +52,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
   private let onFocus: (UUID) -> Void
   private let onOutput: (UUID) -> Void
   private var fileRadar: SessionFileRadar?
+  private let integrationPreferences: OperatorIntegrationPreferences
+  private var isFileWatchingEnabled: Bool
   private let ipcToken: String
   private(set) var keyboardFocusIntent = TerminalFocusIntent()
 
@@ -57,7 +61,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     id: UUID = UUID(), request: LaunchRequest, onFinish: @escaping (UUID, Int32, Bool) -> Void,
     onFilesChanged: @escaping (UUID, [GitChangedFile]) -> Void,
     onFocus: @escaping (UUID) -> Void = { _ in },
-    onOutput: @escaping (UUID) -> Void = { _ in }
+    onOutput: @escaping (UUID) -> Void = { _ in },
+    integrationPreferences: OperatorIntegrationPreferences = .default
   ) {
     self.id = id
     self.request = request
@@ -66,13 +71,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     self.onFilesChanged = onFilesChanged
     self.onFocus = onFocus
     self.onOutput = onOutput
+    self.integrationPreferences = integrationPreferences
+    isFileWatchingEnabled = integrationPreferences.fileWatchingEnabled
     ipcToken = OperatorSessionCredentials.shared.register(sessionID: id)
     super.init()
-    let radar = SessionFileRadar(directory: request.directory) { [weak self] files in
-      Task { @MainActor in self?.updateFileChanges(files) }
-    }
-    fileRadar = radar
-    changedFiles = radar.currentFiles
+    startFileRadarIfNeeded()
   }
 
   deinit { OperatorSessionCredentials.shared.unregister(sessionID: id) }
@@ -100,7 +103,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     terminalView.processDelegate = delegate
     let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     let environment = launchEnvironment.map { "\($0.key)=\($0.value)" }
-    let launchCommand = HarnessHookIntegration.prepare(request, sessionID: id).command
+    let launchCommand = HarnessHookIntegration.prepare(
+      request, sessionID: id, preferences: integrationPreferences
+    ).command
     terminalView.startProcess(
       executable: shell, args: ["-lc", launchCommand], environment: environment, execName: shell,
       currentDirectory: request.directory)
@@ -115,6 +120,52 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     } else {
       view.terminate()
     }
+  }
+
+  func pauseForResourcePolicy() {
+    guard status == .running, !isResourcePaused, let pid = processID, kill(pid, SIGSTOP) == 0 else {
+      return
+    }
+    isResourcePaused = true
+    OperatorDebugLog.record(
+      "resource.paused", "Paused terminal process", metadata: ["session": shortID])
+  }
+
+  func resumeFromResourcePolicy() {
+    guard isResourcePaused, let pid = processID, kill(pid, SIGCONT) == 0 else { return }
+    isResourcePaused = false
+    OperatorDebugLog.record(
+      "resource.resumed", "Resumed terminal process", metadata: ["session": shortID])
+  }
+
+  func refreshResourceSnapshot(using sampler: ProcessResourceSampler, network: ResourceNetworkState)
+  {
+    resourceSnapshot = sampler.sample(pid: processID, network: network)
+  }
+
+  private var processID: Int32? {
+    guard let terminalView, terminalView.process.shellPid > 0 else { return nil }
+    return terminalView.process.shellPid
+  }
+
+  func setFileWatchingEnabled(_ enabled: Bool) {
+    guard isFileWatchingEnabled != enabled else { return }
+    isFileWatchingEnabled = enabled
+    if enabled {
+      startFileRadarIfNeeded()
+    } else {
+      fileRadar = nil
+      changedFiles = []
+    }
+  }
+
+  private func startFileRadarIfNeeded() {
+    guard isFileWatchingEnabled, fileRadar == nil else { return }
+    let radar = SessionFileRadar(directory: request.directory) { [weak self] files in
+      Task { @MainActor in self?.updateFileChanges(files) }
+    }
+    fileRadar = radar
+    changedFiles = radar.currentFiles
   }
 
   /// SwiftUI selection changes do not automatically change AppKit's first responder. Defer until
@@ -153,6 +204,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let failed = code == nil || resolvedCode != 0
     exitCode = resolvedCode
     status = failed ? .failed : .exited
+    isResourcePaused = false
     OperatorDebugLog.record(
       "terminal.exit", "session=\(shortID) code=\(resolvedCode) failed=\(failed)",
       level: failed ? .warning : .info)
@@ -198,11 +250,27 @@ struct SessionOutputActivity: Equatable {
   static let idle = SessionOutputActivity()
 }
 
+enum NotificationPermissionPrompt: String, Identifiable {
+  case request
+  case denied
+
+  var id: String { rawValue }
+}
+
+struct DeletedOpenFilePrompt: Identifiable, Equatable {
+  let paneID: UUID
+  let path: String
+
+  var id: UUID { paneID }
+  var title: String { URL(fileURLWithPath: path).lastPathComponent }
+}
+
 @MainActor
 final class WorkspaceController: ObservableObject {
   @Published private(set) var sessions: [TerminalSession] = []
   @Published private(set) var tabs: [WorkspaceTab] = []
   @Published private(set) var selectedTabID: UUID?
+  @Published private(set) var selectedPaneID: UUID?
   @Published var selectedSessionID: UUID?
   @Published private(set) var selectedEmptyPaneID: UUID?
   @Published private(set) var terminalLayout: TerminalLayout?
@@ -221,15 +289,32 @@ final class WorkspaceController: ObservableObject {
   @Published private(set) var lastGitBranches: [UUID: String] = [:]
   @Published private(set) var lastGitBranchesBySession: [UUID: String] = [:]
   @Published private(set) var sessionOutputActivity: [UUID: SessionOutputActivity] = [:]
+  @Published private(set) var resourceEnvironment = OperatorResourceEnvironment()
+  @Published var notificationPermissionPrompt: NotificationPermissionPrompt?
+  @Published var deletedOpenFilePrompt: DeletedOpenFilePrompt?
 
   let store: StateStore
   var notificationAuthorizationHandler: (@MainActor () async -> Bool)?
+  var notificationAuthorizationStatusHandler:
+    (@MainActor () async -> OperatorNotificationAuthorizationState)?
+  var questionNotificationHandler: @MainActor (String, UUID, String) -> Void = {
+    OperatorNotifications.postQuestion(sessionTitle: $0, sessionID: $1, message: $2)
+  }
+  var taskFinishedNotificationHandler: @MainActor (String, UUID, String, Int32, Bool) -> Void = {
+    OperatorNotifications.postTaskFinished(
+      sessionTitle: $0, sessionID: $1, workspace: $2, exitCode: $3, failed: $4)
+  }
   private var activeProjectID: UUID?
   private var projectSessions: [UUID: [TerminalSession]] = [:]
   private var restoredProjectIDs = Set<UUID>()
   private var gitBranchRequestRevision = 0
   private var focusedBranchMonitor: Timer?
   private var outputIdleTimers: [UUID: Timer] = [:]
+  private var harnessCompletionNotifiedSessions = Set<UUID>()
+  private let resourceSampler = ProcessResourceSampler()
+  private var resourceRefreshTimer: Timer?
+  private var autoPausedSessionIDs = Set<UUID>()
+  private var isResourceMonitoringActive = false
 
   init(store: StateStore, restoreAutomatically: Bool = false) {
     self.store = store
@@ -240,10 +325,14 @@ final class WorkspaceController: ObservableObject {
       discardTerminallessTabs()
       terminalLayout = tabs.first(where: { $0.id == selectedTabID })?.layout
       selectedSessionID = tabs.first(where: { $0.id == selectedTabID })?.focusedSessionID
+      selectedPaneID =
+        tabs.first(where: { $0.id == selectedTabID })?.focusedPaneID
+        ?? selectedSessionID ?? terminalLayout?.firstPaneID
       OperatorDebugLog.record(
         "controller.init",
         "project=\(shortID(projectID)) tabs=\(tabs.count) selectedTab=\(shortID(selectedTabID))")
     }
+    artifacts = artifactsForActiveProject()
     if restoreAutomatically {
       Task { @MainActor [weak self] in self?.restoreSelectedProject() }
     }
@@ -256,10 +345,87 @@ final class WorkspaceController: ObservableObject {
     for timer in outputIdleTimers.values {
       timer.invalidate()
     }
+    resourceRefreshTimer?.invalidate()
+  }
+
+  func handleSystemSleep() {
+    guard isResourceMonitoringActive else { return }
+    pauseBackgroundAgents(reason: "sleep", includeFocused: true)
+  }
+
+  func handleSystemWake() {
+    guard isResourceMonitoringActive else { return }
+    refreshResources()
+    resumeAutoPausedAgentsIfAllowed()
+  }
+
+  func pause(_ session: TerminalSession) {
+    session.pauseForResourcePolicy()
+  }
+
+  func resume(_ session: TerminalSession) {
+    autoPausedSessionIDs.remove(session.id)
+    session.resumeFromResourcePolicy()
+  }
+
+  func killRunaway(_ session: TerminalSession) {
+    guard session.resourceSnapshot.isRunaway else { return }
+    OperatorDebugLog.record(
+      "resource.runaway.killed", "Force-killed runaway terminal process",
+      level: .warning, metadata: ["session": shortID(session.id)])
+    session.terminate(force: true)
+  }
+
+  func activateResourceMonitoring() {
+    guard !isResourceMonitoringActive else { return }
+    isResourceMonitoringActive = true
+    resourceEnvironment.start()
+    startResourceMonitoring()
+  }
+
+  private func startResourceMonitoring() {
+    refreshResources()
+    resourceRefreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) {
+      [weak self] _ in
+      Task { @MainActor in self?.refreshResources() }
+    }
+  }
+
+  private func refreshResources() {
+    resourceEnvironment.refreshPowerSource()
+    for session in allSessions where session.status == .running {
+      session.refreshResourceSnapshot(using: resourceSampler, network: resourceEnvironment.network)
+    }
+    if resourceEnvironment.powerSource == .battery {
+      pauseBackgroundAgents(reason: "battery", includeFocused: false)
+    } else {
+      resumeAutoPausedAgentsIfAllowed()
+    }
+  }
+
+  private func pauseBackgroundAgents(reason: String, includeFocused: Bool) {
+    for session in allSessions
+    where session.status == .running && session.request.harness != .generic {
+      guard includeFocused || session.id != selectedSessionID else { continue }
+      guard !session.isResourcePaused else { continue }
+      session.pauseForResourcePolicy()
+      if session.isResourcePaused { autoPausedSessionIDs.insert(session.id) }
+    }
+    OperatorDebugLog.record(
+      "resource.background-paused", "Paused background agents for \(reason)",
+      metadata: ["count": String(autoPausedSessionIDs.count)])
+  }
+
+  private func resumeAutoPausedAgentsIfAllowed() {
+    guard resourceEnvironment.powerSource != .battery else { return }
+    for id in autoPausedSessionIDs {
+      session(with: id)?.resumeFromResourcePolicy()
+    }
+    autoPausedSessionIDs.removeAll()
   }
 
   var selectedSession: TerminalSession? { sessions.first { $0.id == selectedSessionID } }
-  var canSplitFocusedPane: Bool { selectedSessionID != nil || selectedEmptyPaneID != nil }
+  var canSplitFocusedPane: Bool { selectedPaneID != nil }
   var exitClosePromptSession: TerminalSession? {
     exitClosePromptSessionID.flatMap { session(with: $0) }
   }
@@ -286,6 +452,46 @@ final class WorkspaceController: ObservableObject {
     if activity.hasUnreadOutput { return "Unread terminal output" }
     return "No unread terminal output"
   }
+
+  func questionCount(for tab: WorkspaceTab) -> Int {
+    let sessionIDs = tab.layout.terminalIDs
+    return questions.count { sessionIDs.contains($0.sessionID) }
+  }
+
+  func questionCount(forProjectID projectID: UUID) -> Int {
+    let sessionIDs = tabs(forProjectID: projectID).reduce(into: Set<UUID>()) {
+      $0.formUnion($1.layout.terminalIDs)
+    }
+    return questions.count { sessionIDs.contains($0.sessionID) }
+  }
+
+  func paneState(for session: TerminalSession) -> AgentPaneState {
+    if session.status == .failed { return .failed }
+    if questions.contains(where: { $0.sessionID == session.id }) { return .needsAnswer }
+    if store.paneMetadata(for: session.id).isAwaitingReview { return .awaitingReview }
+    if !session.changedFiles.isEmpty { return .changedFiles }
+    if (sessionOutputActivity[session.id] ?? .idle).isProducingOutput { return .running }
+    return .idle
+  }
+
+  func paneMetadata(for session: TerminalSession) -> AgentPaneMetadata {
+    store.paneMetadata(for: session.id)
+  }
+
+  func setPaneCheckpoint(_ checkpoint: String?, for session: TerminalSession) {
+    store.setPaneCheckpoint(checkpoint, for: session.id)
+    objectWillChange.send()
+  }
+
+  func setPaneNotificationPolicy(_ policy: PaneNotificationPolicy, for session: TerminalSession) {
+    store.setPaneNotificationPolicy(policy, for: session.id)
+    objectWillChange.send()
+  }
+
+  func markPaneReviewed(_ session: TerminalSession) {
+    store.setPaneAwaitingReview(false, for: session.id)
+    objectWillChange.send()
+  }
   var selectedProject: Project? {
     store.state.projects.first { $0.id == store.state.selectedProjectID }
   }
@@ -305,14 +511,14 @@ final class WorkspaceController: ObservableObject {
 
   func activePaneCount(for projectID: UUID) -> Int {
     tabs(forProjectID: projectID).reduce(into: 0) {
-      $0 += $1.layout.terminalIDs.count
+      $0 += $1.layout.contentPaneIDs.count
     }
   }
 
   func tabs(forProjectID projectID: UUID) -> [WorkspaceTab] {
     let projectTabs =
       projectID == activeProjectID ? tabs : store.state.projectTabs[projectID] ?? []
-    return projectTabs.filter { !$0.layout.terminalIDs.isEmpty }
+    return projectTabs.filter { !$0.layout.contentPaneIDs.isEmpty }
   }
   var selectedMarkdownDocument: MarkdownDocument? {
     markdownDocuments.first { $0.path == selectedMarkdownPath }
@@ -391,10 +597,12 @@ final class WorkspaceController: ObservableObject {
         onFilesChanged: { [weak self] id, files in self?.sessionFilesChanged(id: id, files: files)
         },
         onFocus: { [weak self] id in self?.selectTerminal(id) },
-        onOutput: { [weak self] id in self?.recordTerminalOutput(sessionID: id) }
+        onOutput: { [weak self] id in self?.recordTerminalOutput(sessionID: id) },
+        integrationPreferences: store.state.integrationPreferences
       )
       sessions.append(session)
       selectedSessionID = id
+      selectedPaneID = id
       selectedEmptyPaneID = nil
       insertIntoTab(id, title: preparedRequest.title, intoPane: paneID, tabID: tabID)
       session.takeKeyboardFocus()
@@ -444,6 +652,10 @@ final class WorkspaceController: ObservableObject {
       alertMessage = "Add a workspace to \(project.name) before starting a harness."
       return
     }
+    guard HarnessInstallation.isInstalled(kind) else {
+      alertMessage = HarnessInstallation.unavailableHelp(for: kind)
+      return
+    }
     let command: String
     switch kind {
     case .codex: command = "codex"
@@ -487,9 +699,10 @@ final class WorkspaceController: ObservableObject {
     session.terminate()
     sessions.removeAll { $0.id == session.id }
     if let tabIndex = tabs.firstIndex(where: { $0.layout.contains(session.id) }) {
-      if let layout = tabs[tabIndex].layout.removing(session.id), !layout.terminalIDs.isEmpty {
+      if let layout = tabs[tabIndex].layout.removing(session.id), !layout.contentPaneIDs.isEmpty {
         tabs[tabIndex].layout = layout
         tabs[tabIndex].focusedSessionID = layout.firstTerminalID
+        tabs[tabIndex].focusedPaneID = layout.firstPaneID
       } else {
         tabs.remove(at: tabIndex)
       }
@@ -500,6 +713,8 @@ final class WorkspaceController: ObservableObject {
     }
     terminalLayout = selectedTab?.layout
     selectedSessionID = selectedTab?.focusedSessionID
+    selectedPaneID = selectedTab?.focusedPaneID ?? selectedSessionID ?? terminalLayout?.firstPaneID
+    synchronizeSelectionFromFocusedPane()
     sessionProgress[session.id] = nil
     sessionOutputActivity[session.id] = nil
     outputIdleTimers.removeValue(forKey: session.id)?.invalidate()
@@ -573,14 +788,18 @@ final class WorkspaceController: ObservableObject {
         availableSessionIDs: restorableIDs)
       // A tab named after a session is misleading once every terminal in it is unavailable.
       // Mixed layouts retain explicit empty panes, but wholly unavailable tabs are discarded.
-      guard !tab.layout.terminalIDs.isEmpty else { return nil }
+      guard !tab.layout.contentPaneIDs.isEmpty else { return nil }
       if let focused = tab.focusedSessionID, !tab.layout.contains(focused) {
         tab.focusedSessionID = tab.layout.firstTerminalID
+      }
+      if tab.focusedPaneID.map({ tab.layout.paneIDs.contains($0) }) != true {
+        tab.focusedPaneID = tab.focusedSessionID ?? tab.layout.firstPaneID
       }
       return tab
     }
     selectedTabID = store.state.selectedTabIDs[projectID] ?? tabs.first?.id
     terminalLayout = selectedTab?.layout
+    selectedPaneID = selectedTab?.focusedPaneID ?? terminalLayout?.firstPaneID
     OperatorDebugLog.record(
       "restore.begin",
       "project=\(shortID(projectID)) tabs=\(tabs.count) recipes=\(store.state.sessionRecipes.count { $0.projectID == projectID })"
@@ -609,11 +828,14 @@ final class WorkspaceController: ObservableObject {
     store.selectProject(projectID)
     activeProjectID = projectID
     sessions = projectID.flatMap { projectSessions.removeValue(forKey: $0) } ?? []
+    artifacts = artifactsForActiveProject()
     tabs = projectID.flatMap { store.state.projectTabs[$0] } ?? []
     selectedTabID = projectID.flatMap { store.state.selectedTabIDs[$0] } ?? tabs.first?.id
     discardTerminallessTabs()
     terminalLayout = selectedTab?.layout
     selectedSessionID = selectedTab?.focusedSessionID ?? terminalLayout?.firstTerminalID
+    selectedPaneID = selectedTab?.focusedPaneID ?? selectedSessionID ?? terminalLayout?.firstPaneID
+    synchronizeSelectionFromFocusedPane()
     OperatorDebugLog.record(
       "project.select",
       "project=\(shortID(projectID)) tabs=\(tabs.count) selectedTab=\(shortID(selectedTabID))")
@@ -644,8 +866,13 @@ final class WorkspaceController: ObservableObject {
 
   func openMarkdown(_ rawPath: String) {
     do {
-      let path = try MarkdownFile.validate(rawPath)
-      presentMarkdown(path)
+      if let workspaceDirectory = selectedProject?.workspaces.first?.directory {
+        let path = try MarkdownFile.validate(rawPath, withinDirectory: workspaceDirectory)
+        presentMarkdown(path, withinDirectory: workspaceDirectory)
+      } else {
+        let path = try MarkdownFile.validate(rawPath)
+        presentMarkdown(path)
+      }
     } catch {
       alertMessage = error.localizedDescription
     }
@@ -665,10 +892,53 @@ final class WorkspaceController: ObservableObject {
   }
 
   private func presentMarkdown(_ path: String, withinDirectory: String? = nil) {
+    let workspaceDirectory =
+      withinDirectory ?? selectedProject?.workspaces.first?.directory
+      ?? URL(fileURLWithPath: path).deletingLastPathComponent().path
     if markdownDocuments.first(where: { $0.path == path }) == nil {
-      markdownDocuments.append(MarkdownDocument(path: path, allowedDirectory: withinDirectory))
+      markdownDocuments.append(
+        MarkdownDocument(
+          path: path, allowedDirectory: workspaceDirectory,
+          watchForChanges: store.state.integrationPreferences.fileWatchingEnabled))
     }
+    if let emptyPaneID = selectedEmptyPaneID, let layout = terminalLayout,
+      let updated = layout.replacingEmptyPane(
+        emptyPaneID,
+        with: .markdown(
+          emptyPaneID, path: path, workspaceDirectory: workspaceDirectory))
+    {
+      terminalLayout = updated
+      selectedPaneID = emptyPaneID
+      updateSelectedTab {
+        $0.layout = updated
+        $0.focusedPaneID = emptyPaneID
+        $0.focusedSessionID = nil
+      }
+      synchronizeSelectionFromFocusedPane()
+      persistCurrentTabs()
+      return
+    }
+    if let existing = tabs.first(where: { $0.layout.markdownPane(forPath: path) != nil }),
+      let pane = existing.layout.markdownPane(forPath: path)
+    {
+      selectTab(existing.id)
+      selectContentPane(pane.id)
+      return
+    }
+    let paneID = UUID()
+    let tab = WorkspaceTab(
+      id: UUID(), title: URL(fileURLWithPath: path).lastPathComponent,
+      layout: .markdown(paneID, path: path, workspaceDirectory: workspaceDirectory),
+      focusedSessionID: nil, focusedPaneID: paneID)
+    tabs.append(tab)
+    selectedTabID = tab.id
+    terminalLayout = tab.layout
+    selectedPaneID = paneID
+    selectedSessionID = nil
+    selectedEmptyPaneID = nil
     selectedMarkdownPath = path
+    selectedArtifactID = nil
+    persistCurrentTabs()
   }
 
   func selectTerminal(_ sessionID: UUID) {
@@ -676,9 +946,13 @@ final class WorkspaceController: ObservableObject {
       selectTab(tab.id)
     }
     selectedSessionID = sessionID
+    selectedPaneID = sessionID
     markSessionOutputRead(sessionID)
     selectedEmptyPaneID = nil
-    updateSelectedTab { $0.focusedSessionID = sessionID }
+    updateSelectedTab {
+      $0.focusedSessionID = sessionID
+      $0.focusedPaneID = sessionID
+    }
     persistCurrentTabs()
     selectedMarkdownPath = nil
     refreshFocusedGitBranch()
@@ -688,8 +962,14 @@ final class WorkspaceController: ObservableObject {
   func selectEmptyPane(_ paneID: UUID) {
     guard terminalLayout?.emptyPaneIDs.contains(paneID) == true else { return }
     selectedSessionID = nil
+    selectedPaneID = paneID
     selectedEmptyPaneID = paneID
     selectedMarkdownPath = nil
+    updateSelectedTab {
+      $0.focusedPaneID = paneID
+      $0.focusedSessionID = nil
+    }
+    persistCurrentTabs()
     refreshFocusedGitBranch()
   }
 
@@ -697,27 +977,151 @@ final class WorkspaceController: ObservableObject {
     guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
     selectedTabID = tabID
     terminalLayout = tab.layout
-    selectedSessionID = tab.focusedSessionID ?? tab.layout.firstTerminalID
-    selectedEmptyPaneID = nil
-    selectedMarkdownPath = nil
+    selectedPaneID = tab.focusedPaneID ?? tab.focusedSessionID ?? tab.layout.firstPaneID
+    synchronizeSelectionFromFocusedPane()
     markTabOutputRead(tabID)
     OperatorDebugLog.record(
       "tab.select",
-      "tab=\(shortID(tabID)) leaves=\(tab.layout.terminalIDs.count) focused=\(shortID(selectedSessionID))"
+      "tab=\(shortID(tabID)) leaves=\(tab.layout.paneIDs.count) focused=\(shortID(selectedPaneID))"
     )
     persistCurrentTabs()
     refreshFocusedGitBranch()
     selectedSession?.takeKeyboardFocus()
   }
 
+  func selectContentPane(_ paneID: UUID) {
+    if let tab = tabs.first(where: { $0.layout.paneIDs.contains(paneID) }),
+      tab.id != selectedTabID
+    {
+      selectTab(tab.id)
+    }
+    guard terminalLayout?.paneIDs.contains(paneID) == true else { return }
+    selectedPaneID = paneID
+    updateSelectedTab { tab in
+      tab.focusedPaneID = paneID
+      if case .terminal? = tab.layout.pane(withID: paneID) {
+        tab.focusedSessionID = paneID
+      } else {
+        tab.focusedSessionID = nil
+      }
+    }
+    synchronizeSelectionFromFocusedPane()
+    presentDeletionPromptIfFocusedFileIsMissing()
+    persistCurrentTabs()
+    selectedSession?.takeKeyboardFocus()
+  }
+
+  private func synchronizeSelectionFromFocusedPane() {
+    guard let selectedPaneID, let pane = terminalLayout?.pane(withID: selectedPaneID) else {
+      selectedSessionID = nil
+      selectedEmptyPaneID = nil
+      selectedMarkdownPath = nil
+      return
+    }
+    switch pane {
+    case .terminal(let sessionID):
+      selectedSessionID = sessionID
+      selectedEmptyPaneID = nil
+      selectedMarkdownPath = nil
+      markSessionOutputRead(sessionID)
+    case .markdown(_, let path, let workspaceDirectory):
+      selectedSessionID = nil
+      selectedEmptyPaneID = nil
+      selectedMarkdownPath = path
+      if markdownDocuments.first(where: { $0.path == path }) == nil {
+        markdownDocuments.append(
+          MarkdownDocument(
+            path: path, allowedDirectory: workspaceDirectory,
+            watchForChanges: store.state.integrationPreferences.fileWatchingEnabled))
+      }
+    case .file:
+      selectedSessionID = nil
+      selectedEmptyPaneID = nil
+      selectedMarkdownPath = nil
+    case .empty(let paneID):
+      selectedSessionID = nil
+      selectedEmptyPaneID = paneID
+      selectedMarkdownPath = nil
+    case .split:
+      break
+    }
+    selectedArtifactID = nil
+  }
+
+  func openFile(_ rawPath: String) {
+    guard let workspaceDirectory = selectedProject?.workspaces.first?.directory else {
+      alertMessage = "Select a project with a working directory before opening files."
+      return
+    }
+    let path: String
+    do {
+      path = try WorkspacePathPolicy.canonicalContainedPath(
+        rawPath, within: workspaceDirectory)
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+        !isDirectory.boolValue, FileManager.default.isReadableFile(atPath: path)
+      else {
+        throw CocoaError(.fileReadNoPermission)
+      }
+    } catch {
+      alertMessage = error.localizedDescription
+      return
+    }
+
+    if tabs.contains(where: { $0.layout.firstFilePane != nil }) == false,
+      let emptyPaneID = selectedEmptyPaneID, let layout = terminalLayout,
+      let updated = layout.replacingEmptyPane(
+        emptyPaneID,
+        with: .file(emptyPaneID, path: path, workspaceDirectory: workspaceDirectory))
+    {
+      terminalLayout = updated
+      selectedPaneID = emptyPaneID
+      updateSelectedTab {
+        $0.layout = updated
+        $0.focusedPaneID = emptyPaneID
+        $0.focusedSessionID = nil
+      }
+      synchronizeSelectionFromFocusedPane()
+    } else if let index = tabs.firstIndex(where: { $0.layout.firstFilePane != nil }),
+      let existing = tabs[index].layout.firstFilePane,
+      let updated = tabs[index].layout.replacingPane(
+        existing.id,
+        with: .file(existing.id, path: path, workspaceDirectory: workspaceDirectory))
+    {
+      tabs[index].layout = updated
+      tabs[index].title = URL(fileURLWithPath: path).lastPathComponent
+      tabs[index].focusedPaneID = existing.id
+      tabs[index].focusedSessionID = nil
+      selectTab(tabs[index].id)
+      selectContentPane(existing.id)
+    } else {
+      let paneID = UUID()
+      let tab = WorkspaceTab(
+        id: UUID(), title: URL(fileURLWithPath: path).lastPathComponent,
+        layout: .file(paneID, path: path, workspaceDirectory: workspaceDirectory),
+        focusedSessionID: nil, focusedPaneID: paneID)
+      tabs.append(tab)
+      selectedTabID = tab.id
+      terminalLayout = tab.layout
+      selectedPaneID = paneID
+      synchronizeSelectionFromFocusedPane()
+    }
+    persistCurrentTabs()
+  }
+
   func recordTerminalOutput(sessionID: UUID, isVisible: Bool? = nil) {
     guard let session = session(with: sessionID) else { return }
+    // New output means the agent has resumed work after a review checkpoint.
+    if store.paneMetadata(for: sessionID).isAwaitingReview {
+      store.setPaneAwaitingReview(false, for: sessionID)
+    }
     var activity = sessionOutputActivity[sessionID] ?? .idle
     let wasUnread = activity.hasUnreadOutput
     activity.isProducingOutput = true
     let outputIsVisible =
       isVisible
-      ?? (NSApp.isActive && store.state.selectedProjectID == session.request.projectID
+      ?? (NSRunningApplication.current.isActive
+        && store.state.selectedProjectID == session.request.projectID
         && selectedTab?.layout.contains(sessionID) == true)
     if !outputIsVisible { activity.hasUnreadOutput = true }
     sessionOutputActivity[sessionID] = activity
@@ -838,8 +1242,88 @@ final class WorkspaceController: ObservableObject {
   }
 
   func closeMarkdown(_ document: MarkdownDocument) {
-    markdownDocuments.removeAll { $0.path == document.path }
-    if selectedMarkdownPath == document.path { selectedMarkdownPath = nil }
+    let paneIDs = tabs.compactMap { $0.layout.markdownPane(forPath: document.path)?.id }
+    for paneID in paneIDs { closeContentPane(paneID) }
+    if !tabs.contains(where: { $0.layout.markdownPane(forPath: document.path) != nil }) {
+      markdownDocuments.removeAll { $0.path == document.path }
+    }
+  }
+
+  func closeContentPane(_ paneID: UUID) {
+    guard let tabIndex = tabs.firstIndex(where: { $0.layout.paneIDs.contains(paneID) }) else {
+      return
+    }
+    let closingPath: String? = {
+      guard case .markdown(_, let path, _) = tabs[tabIndex].layout.pane(withID: paneID) else {
+        return nil
+      }
+      return path
+    }()
+    if let remaining = tabs[tabIndex].layout.removing(paneID),
+      !remaining.contentPaneIDs.isEmpty
+    {
+      tabs[tabIndex].layout = remaining
+      tabs[tabIndex].focusedPaneID = remaining.firstPaneID
+      tabs[tabIndex].focusedSessionID = remaining.firstTerminalID
+    } else {
+      tabs.remove(at: tabIndex)
+    }
+    if selectedTabID.map({ id in tabs.contains(where: { $0.id == id }) }) != true {
+      selectedTabID = tabs.last?.id
+    }
+    terminalLayout = selectedTab?.layout
+    selectedPaneID = selectedTab?.focusedPaneID ?? terminalLayout?.firstPaneID
+    if deletedOpenFilePrompt?.paneID == paneID { deletedOpenFilePrompt = nil }
+    synchronizeSelectionFromFocusedPane()
+    if let closingPath,
+      !tabs.contains(where: { $0.layout.markdownPane(forPath: closingPath) != nil })
+    {
+      markdownDocuments.removeAll { $0.path == closingPath }
+    }
+    persistCurrentTabs()
+  }
+
+  func reportOpenFileMissing(paneID: UUID, path: String) {
+    guard selectedPaneID == paneID,
+      terminalLayout?.paneIDs.contains(paneID) == true,
+      !FileManager.default.fileExists(atPath: path)
+    else { return }
+    deletedOpenFilePrompt = DeletedOpenFilePrompt(paneID: paneID, path: path)
+  }
+
+  func dismissDeletedOpenFilePrompt() {
+    deletedOpenFilePrompt = nil
+  }
+
+  func closeDeletedOpenFilePrompt() {
+    guard let paneID = deletedOpenFilePrompt?.paneID else { return }
+    deletedOpenFilePrompt = nil
+    closeContentPane(paneID)
+  }
+
+  private func presentDeletionPromptIfFocusedFileIsMissing() {
+    guard let selectedPaneID,
+      let pane = terminalLayout?.pane(withID: selectedPaneID)
+    else {
+      deletedOpenFilePrompt = nil
+      return
+    }
+    let path: String?
+    switch pane {
+    case .markdown(_, let markdownPath, _):
+      path = markdownPath
+    case .file(_, let filePath, _):
+      path = filePath
+    default:
+      path = nil
+    }
+    guard let path, !FileManager.default.fileExists(atPath: path) else {
+      if deletedOpenFilePrompt?.paneID == selectedPaneID {
+        deletedOpenFilePrompt = nil
+      }
+      return
+    }
+    deletedOpenFilePrompt = DeletedOpenFilePrompt(paneID: selectedPaneID, path: path)
   }
 
   func taskBrief(for session: TerminalSession) -> TaskBrief? { store.taskBrief(for: session.id) }
@@ -856,6 +1340,11 @@ final class WorkspaceController: ObservableObject {
     if !enabled {
       OperatorNotifications.deactivate()
       store.setNotificationsEnabled(false)
+      notificationPermissionPrompt = nil
+      return
+    }
+    guard store.state.integrationPreferences.notificationsPermitted else {
+      store.setNotificationsEnabled(false)
       return
     }
     Task {
@@ -867,8 +1356,74 @@ final class WorkspaceController: ObservableObject {
       let granted = await notificationAuthorizationHandler()
       store.setNotificationsEnabled(granted)
       if !granted {
-        alertMessage =
-          "Notifications are disabled in macOS. Enable them for Operator in System Settings to receive session failure alerts."
+        let state = await notificationAuthorizationStatusHandler?()
+        notificationPermissionPrompt = state == .denied ? .denied : .request
+      }
+    }
+  }
+
+  func applyIntegrationPreferences(_ preferences: OperatorIntegrationPreferences) {
+    store.setIntegrationPreferences(preferences)
+    for session in allSessions {
+      session.setFileWatchingEnabled(preferences.fileWatchingEnabled)
+    }
+    for document in markdownDocuments {
+      document.setWatching(preferences.fileWatchingEnabled)
+    }
+    if !preferences.notificationsPermitted {
+      OperatorNotifications.deactivate()
+      notificationPermissionPrompt = nil
+    }
+  }
+
+  func refreshNotificationAuthorization() async {
+    guard store.state.integrationPreferences.notificationsPermitted else {
+      store.setNotificationsEnabled(false)
+      notificationPermissionPrompt = nil
+      return
+    }
+    guard let notificationAuthorizationStatusHandler else { return }
+    let state = await notificationAuthorizationStatusHandler()
+    switch state {
+    case .authorized, .provisional, .ephemeral:
+      guard let notificationAuthorizationHandler else { return }
+      let activated = await notificationAuthorizationHandler()
+      store.setNotificationsEnabled(activated)
+      notificationPermissionPrompt = activated ? nil : .denied
+    case .notDetermined:
+      store.setNotificationsEnabled(false)
+      notificationPermissionPrompt = .request
+    case .denied:
+      store.setNotificationsEnabled(false)
+      notificationPermissionPrompt = .denied
+    case .unavailable:
+      store.setNotificationsEnabled(false)
+      notificationPermissionPrompt = nil
+    }
+  }
+
+  func dismissNotificationPermissionPrompt() {
+    notificationPermissionPrompt = nil
+  }
+
+  func openNotificationSystemSettings() {
+    notificationPermissionPrompt = nil
+    guard
+      let applicationURL = NSWorkspace.shared.urlForApplication(
+        withBundleIdentifier: "com.apple.systempreferences")
+    else {
+      alertMessage = "Open System Settings, choose Notifications, then enable Operator."
+      return
+    }
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = true
+    NSWorkspace.shared.openApplication(
+      at: applicationURL, configuration: configuration
+    ) { [weak self] _, error in
+      guard let error else { return }
+      Task { @MainActor in
+        self?.alertMessage =
+          "Open System Settings, choose Notifications, then enable Operator. \(error.localizedDescription)"
       }
     }
   }
@@ -878,12 +1433,17 @@ final class WorkspaceController: ObservableObject {
     systemSurfaceRevision &+= 1
     store.recordFinish(id: id, exitCode: code, failed: failed)
     guard let session = session(with: id) else { return }
+    if !failed, session.request.harness != .generic {
+      store.setPaneAwaitingReview(true, for: id)
+    }
     exitClosePromptSessionID = id
-    guard store.state.notificationsEnabled else { return }
-    OperatorNotifications.postTaskFinished(
-      sessionTitle: session.title, sessionID: id,
-      workspace: URL(fileURLWithPath: session.request.directory).lastPathComponent, exitCode: code,
-      failed: failed)
+    guard shouldNotify(session, for: failed ? .failed : .awaitingReview) else { return }
+    if code == 0, !failed, harnessCompletionNotifiedSessions.remove(id) != nil {
+      return
+    }
+    taskFinishedNotificationHandler(
+      session.title, id, URL(fileURLWithPath: session.request.directory).lastPathComponent, code,
+      failed)
   }
 
   private func sessionFilesChanged(id: UUID, files: [GitChangedFile]) {
@@ -892,21 +1452,11 @@ final class WorkspaceController: ObservableObject {
   }
 
   func splitFocusedTerminal(_ orientation: SplitOrientation) {
-    guard let layout = terminalLayout else { return }
+    guard let layout = terminalLayout, let focusedPaneID = selectedPaneID else { return }
     let paneID = UUID()
-    let focusedPaneID = selectedSessionID ?? selectedEmptyPaneID
-    let splitPath: String
-    if let focused = selectedSessionID {
-      splitPath = layout.path(to: focused) ?? "root"
-      terminalLayout = layout.splitting(
-        sessionID: focused, orientation: orientation, emptyPaneID: paneID)
-    } else if let focused = selectedEmptyPaneID {
-      splitPath = layout.path(toEmptyPane: focused) ?? "root"
-      terminalLayout = layout.splitting(
-        emptyPaneID: focused, orientation: orientation, newEmptyPaneID: paneID)
-    } else {
-      return
-    }
+    let splitPath = layout.path(to: focusedPaneID) ?? "root"
+    terminalLayout = layout.splitting(
+      paneID: focusedPaneID, orientation: orientation, emptyPaneID: paneID)
     updateSelectedTab {
       $0.layout = terminalLayout ?? $0.layout
       // A new split always starts as an even division. Remove obsolete child values from a
@@ -923,23 +1473,29 @@ final class WorkspaceController: ObservableObject {
 
   func closeEmptyPane(_ paneID: UUID) {
     terminalLayout = terminalLayout?.removingEmptyPane(paneID)
-    if let terminalLayout { updateSelectedTab { $0.layout = terminalLayout } }
+    if let terminalLayout {
+      updateSelectedTab {
+        $0.layout = terminalLayout
+        $0.focusedPaneID = terminalLayout.firstPaneID
+        $0.focusedSessionID = terminalLayout.firstTerminalID
+      }
+    }
     if selectedEmptyPaneID == paneID {
-      selectedEmptyPaneID = nil
-      selectedSessionID = terminalLayout?.firstTerminalID
+      selectedPaneID = terminalLayout?.firstPaneID
+      synchronizeSelectionFromFocusedPane()
     }
     persistCurrentTabs()
   }
 
   func missionControlLayout() {
-    let ids = terminalLayout?.terminalIDsInDisplayOrder ?? []
-    guard ids.count >= 2 else { return }
-    func pair(_ first: UUID, _ second: UUID) -> TerminalLayout {
-      .split(.horizontal, .terminal(first), .terminal(second))
+    let panes = terminalLayout?.panesInDisplayOrder ?? []
+    guard panes.count >= 2 else { return }
+    func pair(_ first: TerminalLayout, _ second: TerminalLayout) -> TerminalLayout {
+      .split(.horizontal, first, second)
     }
-    let rows = stride(from: 0, to: ids.count, by: 2).map { index -> TerminalLayout in
-      guard index + 1 < ids.count else { return .terminal(ids[index]) }
-      return pair(ids[index], ids[index + 1])
+    let rows = stride(from: 0, to: panes.count, by: 2).map { index -> TerminalLayout in
+      guard index + 1 < panes.count else { return panes[index] }
+      return pair(panes[index], panes[index + 1])
     }
     terminalLayout = rows.dropFirst().reduce(rows[0]) { .split(.vertical, $0, $1) }
     if let terminalLayout { updateSelectedTab { $0.layout = terminalLayout } }
@@ -975,9 +1531,8 @@ final class WorkspaceController: ObservableObject {
       !questions.contains(where: { $0.sessionID == sessionID && $0.message == cleanMessage }),
       let session = enqueueQuestion(sessionID: sessionID, message: cleanMessage)
     else { return }
-    if store.state.notificationsEnabled {
-      OperatorNotifications.postQuestion(
-        sessionTitle: session.title, sessionID: sessionID, message: cleanMessage)
+    if shouldNotify(session, for: .needsAnswer) {
+      questionNotificationHandler(session.title, sessionID, cleanMessage)
     }
   }
 
@@ -1001,6 +1556,15 @@ final class WorkspaceController: ObservableObject {
       if let progress = event.progress, progress.isFinite {
         sessionProgress[event.sessionID] = min(1, max(0, progress))
       }
+    case .taskFinished:
+      sessionProgress[event.sessionID] = 1
+      store.setPaneAwaitingReview(true, for: event.sessionID)
+      if shouldNotify(session, for: .awaitingReview) {
+        harnessCompletionNotifiedSessions.insert(event.sessionID)
+        taskFinishedNotificationHandler(
+          session.title, event.sessionID,
+          URL(fileURLWithPath: session.request.directory).lastPathComponent, 0, false)
+      }
     case .artifact:
       guard let rawPath = event.path else { return }
       let path: String
@@ -1021,15 +1585,13 @@ final class WorkspaceController: ObservableObject {
       let artifact = ArtifactDescriptor(
         projectID: projectID, sessionID: event.sessionID, path: path,
         workspaceDirectory: session.request.directory, kind: kind)
-      if !artifacts.contains(where: { $0.path == path && $0.sessionID == event.sessionID }) {
-        artifacts.append(artifact)
-      }
+      store.upsertArtifact(artifact)
+      artifacts = artifactsForActiveProject()
       if kind == .markdown {
         openMarkdown(path, requestedBy: event.sessionID)
       } else {
         selectedArtifactID =
           artifacts.first(where: { $0.path == path && $0.sessionID == event.sessionID })?.id
-          ?? artifact.id
       }
     default: break
     }
@@ -1057,9 +1619,43 @@ final class WorkspaceController: ObservableObject {
     }
   }
 
+  private func shouldNotify(_ session: TerminalSession, for state: AgentPaneState) -> Bool {
+    store.state.notificationsEnabled
+      && store.paneMetadata(for: session.id).notificationPolicy.permits(state)
+  }
+
   func closeArtifact(_ artifact: ArtifactDescriptor) {
     artifacts.removeAll { $0.id == artifact.id }
+    store.removeArtifact(artifact.id)
     if selectedArtifactID == artifact.id { selectedArtifactID = nil }
+  }
+
+  func setArtifactPinned(_ artifact: ArtifactDescriptor, pinned: Bool) {
+    store.setArtifactPinned(pinned, id: artifact.id)
+    artifacts = artifactsForActiveProject()
+  }
+
+  func attachArtifact(_ artifact: ArtifactDescriptor, to session: TerminalSession?) {
+    store.attachArtifact(artifact.id, to: session?.id)
+    artifacts = artifactsForActiveProject()
+  }
+
+  func revealArtifactSource(_ artifact: ArtifactDescriptor) { revealSession(artifact.sessionID) }
+
+  func insertDroppedPaths(_ urls: [URL], into session: TerminalSession) {
+    let paths = urls.filter { $0.isFileURL }.map { shellQuoted($0.path) }
+    guard !paths.isEmpty else { return }
+    session.sendInput(paths.joined(separator: " "))
+    OperatorDebugLog.record(
+      "drop.terminal.inserted", "Inserted dropped path(s) without execution",
+      metadata: ["session": shortID(session.id), "count": String(paths.count)])
+  }
+
+  private func artifactsForActiveProject() -> [ArtifactDescriptor] {
+    store.state.artifacts.filter { $0.projectID == activeProjectID }.sorted {
+      if $0.isPinned != $1.isPinned { return $0.isPinned }
+      return $0.createdAt > $1.createdAt
+    }
   }
 
   private static func detectArtifactKind(_ path: String) -> ArtifactKind {
@@ -1068,6 +1664,9 @@ final class WorkspaceController: ObservableObject {
     case "png", "jpg", "jpeg", "gif", "heic": .image
     case "json": .json
     case "patch", "diff": .patch
+    case "log", "out", "err": .log
+    case "html", "htm": .html
+    case "pdf": .pdf
     case "xml": .testReport
     default: .text
     }
@@ -1137,7 +1736,7 @@ final class WorkspaceController: ObservableObject {
 
   private func discardTerminallessTabs() {
     let previousCount = tabs.count
-    tabs.removeAll { $0.layout.terminalIDs.isEmpty }
+    tabs.removeAll { $0.layout.contentPaneIDs.isEmpty }
     if selectedTabID.map({ id in tabs.contains(where: { $0.id == id }) }) != true {
       selectedTabID = tabs.first?.id
     }
@@ -1162,6 +1761,23 @@ final class WorkspaceController: ObservableObject {
     revealQuestion(question)
   }
 
+  func focusQuestion(for sessionID: UUID) {
+    if let question = questions.first(where: { $0.sessionID == sessionID }) {
+      revealQuestion(question)
+    } else {
+      revealSession(sessionID)
+    }
+  }
+
+  func retrySession(_ sessionID: UUID) {
+    guard let session = session(with: sessionID) else {
+      alertMessage = "The failed terminal is no longer available to retry."
+      return
+    }
+    revealSession(sessionID)
+    restart(session)
+  }
+
   func revealQuestion(_ question: HarnessQuestion) {
     if let projectID = session(with: question.sessionID)?.request.projectID,
       projectID != store.state.selectedProjectID
@@ -1169,6 +1785,17 @@ final class WorkspaceController: ObservableObject {
       selectProject(projectID)
     }
     selectTerminal(question.sessionID)
+  }
+
+  func revealSession(_ sessionID: UUID) {
+    guard let session = session(with: sessionID) else {
+      alertMessage = "The originating terminal is no longer available."
+      return
+    }
+    if let projectID = session.request.projectID, projectID != store.state.selectedProjectID {
+      selectProject(projectID)
+    }
+    selectTerminal(sessionID)
   }
 
   func focusAdjacentSession(_ offset: Int) {
@@ -1192,6 +1819,7 @@ final class WorkspaceController: ObservableObject {
       let layout = tabs[index].layout
       tabs[index].layout = paneID.flatMap { layout.replacingEmptyPane($0, with: id) } ?? layout
       tabs[index].focusedSessionID = id
+      tabs[index].focusedPaneID = id
       selectedTabID = tabID
     } else if let paneID, let selectedTabID,
       let index = tabs.firstIndex(where: { $0.id == selectedTabID }),
@@ -1199,12 +1827,14 @@ final class WorkspaceController: ObservableObject {
     {
       tabs[index].layout = layout
       tabs[index].focusedSessionID = id
+      tabs[index].focusedPaneID = id
     } else {
       let tab = WorkspaceTab(id: UUID(), title: title, layout: .terminal(id), focusedSessionID: id)
       tabs.append(tab)
       selectedTabID = tab.id
     }
     terminalLayout = selectedTab?.layout
+    selectedPaneID = id
     persistCurrentTabs()
     OperatorDebugLog.record(
       "tab.layout",

@@ -44,7 +44,7 @@ struct ProjectManagerView: View {
       isPresented: Binding(
         get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
     ) {
-      Button("Delete Metadata", role: .destructive) {
+      Button("Delete Metadata", role: OperatorAlertActionStyle.destructiveRole) {
         if let project = deleteTarget { controller.deleteProjectMetadata(project.id) }
         deleteTarget = nil
       }

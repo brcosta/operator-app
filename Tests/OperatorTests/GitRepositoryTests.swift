@@ -125,4 +125,31 @@ struct GitRepositoryTests {
     #expect(!FileManager.default.fileExists(atPath: marker.path))
   }
 
+  @Test func trackedFilesResolveToSafeImmutableGitHubLinks() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    try TestSupport.initializeGitRepository(at: directory)
+    let sources = directory.appendingPathComponent("src/atlas")
+    try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+    let tracked = sources.appendingPathComponent("core file.clj")
+    let untracked = sources.appendingPathComponent("scratch.clj")
+    try "(ns atlas.core)\n".write(to: tracked, atomically: true, encoding: .utf8)
+    try "(println :scratch)\n".write(to: untracked, atomically: true, encoding: .utf8)
+    try TestSupport.runGit(["add", "src/atlas/core file.clj"], in: directory)
+    try TestSupport.runGit(["commit", "-m", "Add Clojure source"], in: directory)
+    try TestSupport.runGit(
+      ["remote", "add", "origin", "git@github.com:brcosta/operator-app.git"], in: directory)
+
+    let url = try #require(GitRepository.githubFileURL(for: tracked.path))
+    #expect(url.host == "github.com")
+    #expect(url.absoluteString.hasPrefix("https://github.com/brcosta/operator-app/blob/"))
+    #expect(url.absoluteString.hasSuffix("/src/atlas/core%20file.clj"))
+    #expect(GitRepository.githubFileURL(for: untracked.path) == nil)
+
+    try TestSupport.runGit(
+      ["remote", "set-url", "origin", "https://example.com/brcosta/operator-app.git"],
+      in: directory)
+    #expect(GitRepository.githubFileURL(for: tracked.path) == nil)
+  }
+
 }

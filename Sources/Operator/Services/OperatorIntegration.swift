@@ -129,6 +129,15 @@ enum OperatorRuntimeSocketDirectory {
 }
 
 enum OperatorCommandClient {
+  static func help(arguments: [String]) -> Int32 {
+    guard arguments.count == 1, ["help", "--help", "-h"].contains(arguments[0]) else {
+      writeError("Usage: operator help\n")
+      return 64
+    }
+    writeOutput(OperatorHarnessSkill.instructions + "\n")
+    return 0
+  }
+
   static func open(arguments: [String]) -> Int32 {
     guard arguments.count == 2, arguments[0] == "open" else {
       writeError("Usage: operator open <markdown-path>\n")
@@ -300,6 +309,10 @@ enum OperatorCommandClient {
 
   private static func writeError(_ text: String) {
     if let data = text.data(using: .utf8) { FileHandle.standardError.write(data) }
+  }
+
+  private static func writeOutput(_ text: String) {
+    if let data = text.data(using: .utf8) { FileHandle.standardOutput.write(data) }
   }
 }
 

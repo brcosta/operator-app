@@ -46,4 +46,50 @@ struct TerminalLayoutTests {
     #expect(repaired.emptyPaneIDs.contains(unavailable))
     #expect(repaired.emptyPaneIDs.contains(existingEmpty))
   }
+
+  @Test func mixedContentLeavesSplitRemoveAndRoundTripWithoutLosingIdentity() throws {
+    let terminalID = UUID()
+    let markdownID = UUID()
+    let fileID = UUID()
+    let emptyID = UUID()
+    let layout: TerminalLayout = .split(
+      .vertical,
+      .split(
+        .horizontal, .terminal(terminalID),
+        .markdown(markdownID, path: "/tmp/README.md", workspaceDirectory: "/tmp")),
+      .split(
+        .horizontal, .file(fileID, path: "/tmp/App.swift", workspaceDirectory: "/tmp"),
+        .empty(emptyID)))
+
+    #expect(layout.terminalIDs == [terminalID])
+    #expect(layout.contentPaneIDs == [terminalID, markdownID, fileID])
+    #expect(layout.paneIDs == [terminalID, markdownID, fileID, emptyID])
+    #expect(layout.markdownPane(forPath: "/tmp/README.md")?.id == markdownID)
+    #expect(layout.firstFilePane?.id == fileID)
+    #expect(layout.panesInDisplayOrder.count == 4)
+
+    let data = try JSONEncoder().encode(layout)
+    #expect(try JSONDecoder().decode(TerminalLayout.self, from: data) == layout)
+    #expect(layout.removing(markdownID)?.contentPaneIDs == [terminalID, fileID])
+    #expect(layout.removing(fileID)?.contentPaneIDs == [terminalID, markdownID])
+  }
+
+  @Test func unavailableRepairPreservesDocumentAndSourceViewerPanes() {
+    let terminalID = UUID()
+    let markdownID = UUID()
+    let fileID = UUID()
+    let layout: TerminalLayout = .split(
+      .vertical,
+      .markdown(markdownID, path: "/tmp/README.md", workspaceDirectory: "/tmp"),
+      .split(
+        .horizontal, .terminal(terminalID),
+        .file(fileID, path: "/tmp/App.swift", workspaceDirectory: "/tmp")))
+
+    let repaired = layout.replacingUnavailableTerminals(availableSessionIDs: [])
+
+    #expect(repaired.emptyPaneIDs == [terminalID])
+    #expect(repaired.contentPaneIDs == [markdownID, fileID])
+    #expect(repaired.markdownPane(forPath: "/tmp/README.md")?.id == markdownID)
+    #expect(repaired.firstFilePane?.id == fileID)
+  }
 }

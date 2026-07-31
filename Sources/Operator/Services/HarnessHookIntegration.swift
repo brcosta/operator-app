@@ -8,9 +8,12 @@ import Foundation
 enum HarnessHookIntegration {
   @MainActor static func prepare(
     _ request: LaunchRequest, sessionID: UUID,
+    preferences: OperatorIntegrationPreferences = .default,
     supportDirectory: URL = HarnessHookIntegration.defaultSupportDirectory
   ) -> LaunchRequest {
-    guard request.harness != .generic else { return request }
+    guard request.harness != .generic, preferences.skillsEnabled || preferences.hooksEnabled else {
+      return request
+    }
 
     do {
       let directory =
@@ -18,16 +21,27 @@ enum HarnessHookIntegration {
         .appendingPathComponent("HarnessHooks", isDirectory: true)
         .appendingPathComponent(sessionID.uuidString, isDirectory: true)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700], ofItemAtPath: directory.path)
+      let skillURL = preferences.skillsEnabled ? try writeOperatorSkill(in: directory) : nil
 
       switch request.harness {
       case .claudeCode:
-        let settingsURL = directory.appendingPathComponent("claude-settings.json")
-        try claudeSettingsData().write(to: settingsURL, options: .atomic)
-        let options = ["--settings", shellQuoted(settingsURL.path)]
+        var options: [String] = []
+        if preferences.hooksEnabled {
+          let settingsURL = directory.appendingPathComponent("claude-settings.json")
+          try claudeSettingsData().write(to: settingsURL, options: .atomic)
+          try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: settingsURL.path)
+          options += ["--settings", shellQuoted(settingsURL.path)]
+        }
+        if let skillURL { options += ["--append-system-prompt-file", shellQuoted(skillURL.path)] }
         return request.addingLaunchOptions(options).recoveringFailedClaudeResume(
           launchOptions: options)
       case .codex:
-        let options = codexLaunchOptions()
+        let options = codexLaunchOptions(
+          instructions: preferences.skillsEnabled ? OperatorHarnessSkill.instructions : nil,
+          hooksEnabled: preferences.hooksEnabled)
         return request.addingLaunchOptions(options).recoveringFailedCodexResume(
           launchOptions: options)
       case .generic:
@@ -101,6 +115,13 @@ enum HarnessHookIntegration {
     return try JSONSerialization.data(withJSONObject: ["hooks": hooks], options: [.prettyPrinted])
   }
 
+  private static func writeOperatorSkill(in directory: URL) throws -> URL {
+    let url = directory.appendingPathComponent("operator-control.md")
+    try OperatorHarnessSkill.instructions.write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    return url
+  }
+
   private static func hookEntries(_ hookName: String) -> [[String: Any]] {
     [
       [
@@ -110,7 +131,7 @@ enum HarnessHookIntegration {
     ]
   }
 
-  private static func codexLaunchOptions() -> [String] {
+  private static func codexLaunchOptions(instructions: String?, hooksEnabled: Bool) -> [String] {
     // Codex merges hooks across active config layers. Keep every session override under hooks.*
     // so user/project model, sandbox, MCP, plugin, UI, and existing hook settings remain intact.
     let events: [(String, String, String)] = [
@@ -120,17 +141,29 @@ enum HarnessHookIntegration {
       ("PostToolUse", "", "tool-finished"),
       ("Stop", "", "turn-stopped"),
     ]
-    return events.flatMap { event, matcher, hookName in
+    let skillOptions: [String]
+    if let instructions {
+      let skillConfig = "developer_instructions=\"\(tomlEscaped(instructions))\""
+      skillOptions = ["--config", shellQuoted(skillConfig)]
+    } else {
+      skillOptions = []
+    }
+    guard hooksEnabled else { return skillOptions }
+    let hookOptions = events.flatMap { event, matcher, hookName in
       let command = "operator hook codex-\(hookName)"
       let config =
         "hooks.\(event)=[{matcher=\"\(matcher)\",hooks=[{type=\"command\",command=\""
         + tomlEscaped(command) + "\"}]}]"
       return ["--config", shellQuoted(config)]
     }
+    return skillOptions + hookOptions
   }
 
   private static func tomlEscaped(_ value: String) -> String {
-    value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    value
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+      .replacingOccurrences(of: "\n", with: "\\n")
   }
 
   private struct ClaudeHookPayload: Decodable {
@@ -160,6 +193,29 @@ enum HarnessHookIntegration {
     }
     return identifier
   }
+}
+
+enum OperatorHarnessSkill {
+  static let instructions = """
+    Operator control skill (session-scoped)
+
+    You are running inside an Operator-managed terminal. The `operator` helper on PATH controls
+    only this current session's workspace. Use it only when it makes the user's workspace easier
+    to follow; it is optional and a failed request must not interrupt your primary task.
+
+    Available commands:
+    - `operator open <path.md>`: open a Markdown file inside the current workspace.
+    - `operator layout split-right` or `operator layout split-bottom`: split the current pane.
+    - `operator layout mission-control`: arrange the current project's active terminal panes.
+    - `operator question <message>`: ask the user a decision through Operator.
+    - `operator artifact open <path> [kind]`: surface a generated artifact in Operator.
+    - `operator help`: display this command reference in the terminal.
+
+    Paths must stay within the current workspace. Never inspect, print, forward, or override
+    `OPERATOR_TOKEN`, `OPERATOR_SOCKET`, or `OPERATOR_SESSION_ID`; the helper uses them safely.
+    Do not invent commands or issue raw socket requests. If Operator is unavailable, continue
+    normally and report the non-blocking failure only when the user needs that UI action.
+    """
 }
 
 extension LaunchRequest {

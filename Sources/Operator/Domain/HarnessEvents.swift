@@ -18,7 +18,7 @@ enum HarnessEventKind: String, Codable, CaseIterable {
 }
 
 enum ArtifactKind: String, Codable, CaseIterable {
-  case auto, markdown, image, json, text, testReport, patch
+  case auto, markdown, image, json, text, log, testReport, patch, html, pdf
 }
 
 struct HarnessEventEnvelope: Codable, Hashable, Identifiable {
@@ -47,8 +47,23 @@ struct ArtifactDescriptor: Codable, Hashable, Identifiable {
   var workspaceDirectory: String
   var kind: ArtifactKind
   var createdAt: Date = .now
+  var isPinned = false
+  var attachedSessionID: UUID? = nil
 
   var title: String { URL(fileURLWithPath: path).lastPathComponent }
+
+  var symbolName: String {
+    switch kind {
+    case .image: "photo"
+    case .markdown: "doc.richtext"
+    case .json: "curlybraces"
+    case .patch: "arrow.left.arrow.right"
+    case .log: "text.line.first.and.arrowtriangle.forward"
+    case .html: "globe"
+    case .pdf: "doc.fill"
+    case .auto, .text, .testReport: "shippingbox"
+    }
+  }
 }
 
 struct InteractionRecord: Codable, Hashable, Identifiable {

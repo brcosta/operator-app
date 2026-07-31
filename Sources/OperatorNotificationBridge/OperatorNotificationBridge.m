@@ -37,6 +37,16 @@ NSError *OperatorInstallNotificationDelegate(
   }
 }
 
+NSError *OperatorSetNotificationCategories(
+    NSSet<UNNotificationCategory *> *categories) {
+  @try {
+    [OperatorCurrentNotificationCenter() setNotificationCategories:categories];
+    return nil;
+  } @catch (NSException *exception) {
+    return OperatorNotificationErrorFromException(exception);
+  }
+}
+
 void OperatorRequestNotificationAuthorization(
     UNAuthorizationOptions options,
     OperatorNotificationAuthorizationCompletion completion) {
@@ -46,6 +56,20 @@ void OperatorRequestNotificationAuthorization(
                       completionHandler:completion];
   } @catch (NSException *exception) {
     completion(NO, OperatorNotificationErrorFromException(exception));
+  }
+}
+
+void OperatorGetNotificationAuthorizationStatus(
+    OperatorNotificationSettingsCompletion completion) {
+  @try {
+    [OperatorCurrentNotificationCenter()
+        getNotificationSettingsWithCompletionHandler:^(
+            UNNotificationSettings *settings) {
+          completion(settings.authorizationStatus, nil);
+        }];
+  } @catch (NSException *exception) {
+    completion(UNAuthorizationStatusDenied,
+               OperatorNotificationErrorFromException(exception));
   }
 }
 

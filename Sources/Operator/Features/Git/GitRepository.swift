@@ -125,6 +125,62 @@ enum GitRepository {
     return branch.isEmpty ? "Detached HEAD" : branch
   }
 
+  /// Resolves a tracked local file to an immutable GitHub blob URL. Untracked files, repositories
+  /// without a GitHub `origin`, and non-HTTP(S)/SSH GitHub remotes deliberately return `nil`.
+  static func githubFileURL(for rawPath: String) -> URL? {
+    guard
+      let root = try? repositoryRoot(containing: rawPath),
+      let file = try? WorkspacePathPolicy.canonicalContainedPath(rawPath, within: root)
+    else { return nil }
+    let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+    let relativePath = String(
+      file.dropFirst(rootURL.path.hasSuffix("/") ? root.count : root.count + 1))
+    guard !relativePath.isEmpty,
+      (try? run(
+        directory: root, arguments: ["ls-files", "--error-unmatch", "--", relativePath])) != nil,
+      let remote = try? run(directory: root, arguments: ["remote", "get-url", "origin"])
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      let repositoryPath = githubRepositoryPath(from: remote),
+      let revision = try? run(directory: root, arguments: ["rev-parse", "HEAD"])
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+      revision.range(of: #"^[0-9a-fA-F]{40,64}$"#, options: .regularExpression) != nil
+    else { return nil }
+
+    let encodedPath = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+      .compactMap {
+        String($0).addingPercentEncoding(withAllowedCharacters: urlPathComponentAllowed)
+      }
+      .joined(separator: "/")
+    guard !encodedPath.isEmpty else { return nil }
+    return URL(string: "https://github.com/\(repositoryPath)/blob/\(revision)/\(encodedPath)")
+  }
+
+  private static let urlPathComponentAllowed = CharacterSet(
+    charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+
+  private static func githubRepositoryPath(from rawRemote: String) -> String? {
+    let remote = rawRemote.trimmingCharacters(in: .whitespacesAndNewlines)
+    let path: String?
+    if let url = URL(string: remote), url.host?.lowercased() == "github.com" {
+      path = url.path
+    } else if remote.lowercased().hasPrefix("git@github.com:") {
+      path = String(remote.dropFirst("git@github.com:".count))
+    } else {
+      path = nil
+    }
+    guard var path else { return nil }
+    path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    if path.hasSuffix(".git") { path.removeLast(4) }
+    let components = path.split(separator: "/")
+    guard components.count == 2,
+      components.allSatisfy({
+        !$0.isEmpty
+          && $0.allSatisfy { $0.isLetter || $0.isNumber || "-._".contains($0) }
+      })
+    else { return nil }
+    return components.map(String.init).joined(separator: "/")
+  }
+
   private static func repositoryDirectory(containing rawPath: String, fileManager: FileManager)
     -> URL?
   {

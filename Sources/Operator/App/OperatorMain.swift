@@ -15,13 +15,14 @@ struct OperatorMain {
     case "event": exit(OperatorCommandClient.event(arguments: arguments))
     case "hook": exit(OperatorCommandClient.hook(arguments: arguments))
     case "artifact": exit(OperatorCommandClient.artifact(arguments: arguments))
+    case "help", "--help", "-h": exit(OperatorCommandClient.help(arguments: arguments))
     case "--ui-testing":
       break  // XCTest supplies this flag when launching the macOS application target.
     case let command? where command.hasPrefix("-psn_"):
       break  // Finder launches macOS apps with a process-serial-number argument.
     case .some:
       fputs(
-        "Usage: operator <open|layout|split-right|split-bottom|split-down|question|event|hook|artifact> …\n",
+        "Usage: operator <open|layout|split-right|split-bottom|split-down|question|event|hook|artifact|help> …\n",
         stderr)
       exit(64)
     case nil:

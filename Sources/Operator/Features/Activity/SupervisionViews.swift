@@ -25,11 +25,11 @@ struct ActivityTimelineView: View {
         Spacer()
         VStack(alignment: .trailing, spacing: 2) {
           Toggle(
-            "Failure alerts for this run",
+            "Native harness notifications",
             isOn: Binding(get: { store.state.notificationsEnabled }, set: setNotificationsEnabled)
           )
           .toggleStyle(.switch)
-          Text("Always off when Operator starts")
+          Text("Questions, completions, and failures")
             .font(.caption2)
             .foregroundStyle(.secondary)
         }

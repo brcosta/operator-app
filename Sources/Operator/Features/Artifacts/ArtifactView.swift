@@ -8,22 +8,53 @@ struct ArtifactView: View {
   @State private var error: String?
 
   var body: some View {
-    Group {
-      if let image {
-        ScrollView([.horizontal, .vertical]) {
-          Image(nsImage: image).resizable().scaledToFit().padding()
+    VStack(spacing: 0) {
+      HStack {
+        Label(artifact.title, systemImage: artifact.symbolName).lineLimit(1)
+        Spacer()
+        Button {
+          NSWorkspace.shared.open(URL(fileURLWithPath: artifact.path))
+        } label: {
+          Image(systemName: "arrow.up.forward.app")
+        }.help("Open externally")
+        Button {
+          NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: artifact.path)])
+        } label: {
+          Image(systemName: "folder")
+        }.help("Reveal in Finder")
+        Button {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(artifact.path, forType: .string)
+        } label: {
+          Image(systemName: "doc.on.doc")
+        }.help("Copy path")
+        ShareLink(item: URL(fileURLWithPath: artifact.path)) {
+          Image(systemName: "square.and.arrow.up")
         }
-      } else if let error {
-        ContentUnavailableView(
-          "Could not open artifact", systemImage: "exclamationmark.triangle",
-          description: Text(error))
-      } else {
-        ScrollView {
-          Text(renderedText).textSelection(.enabled).font(
-            artifact.kind == .json || artifact.kind == .text || artifact.kind == .patch
-              ? .system(.body, design: .monospaced) : .body
-          )
-          .frame(maxWidth: .infinity, alignment: .leading).padding(20)
+      }
+      .padding(.horizontal, 12).padding(.vertical, 8).background(.bar)
+      Group {
+        if let image {
+          ScrollView([.horizontal, .vertical]) {
+            Image(nsImage: image).resizable().scaledToFit().padding()
+          }
+        } else if let error {
+          ContentUnavailableView(
+            "Could not open artifact", systemImage: "exclamationmark.triangle",
+            description: Text(error))
+        } else if artifact.kind == .pdf || artifact.kind == .html {
+          ContentUnavailableView(
+            "Open this artifact externally",
+            systemImage: artifact.kind == .pdf ? "doc.fill" : "globe",
+            description: Text("For safety, Operator does not embed active HTML or PDF content."))
+        } else {
+          ScrollView {
+            Text(renderedText).textSelection(.enabled).font(
+              artifact.kind == .json || artifact.kind == .text || artifact.kind == .patch
+                ? .system(.body, design: .monospaced) : .body
+            )
+            .frame(maxWidth: .infinity, alignment: .leading).padding(20)
+          }
         }
       }
     }

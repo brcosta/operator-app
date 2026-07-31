@@ -57,6 +57,7 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
   private var projectManagerWindow: NSWindow?
   private var windowLayoutSaveTask: DispatchWorkItem?
   private var appliedAppearance: AppAppearancePreference?
+  private var powerObservers: [NSObjectProtocol] = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     OperatorDebugLog.record(
@@ -65,6 +66,9 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     controller.notificationAuthorizationHandler = { [weak self] in
       guard let self else { return false }
       return await OperatorNotifications.activate(delegate: self)
+    }
+    controller.notificationAuthorizationStatusHandler = {
+      await OperatorNotifications.authorizationState()
     }
     applyAppearance(store.state.appearance)
     configureMainMenu()
@@ -75,7 +79,14 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         self?.configureMainMenu()
       }
     if !isUITesting { configureSystemSurfaces() }
+    configurePowerObservers()
     showWorkspace()
+    if !isUITesting { controller.activateResourceMonitoring() }
+    if !isUITesting {
+      Task { @MainActor [weak self] in
+        await self?.controller.refreshNotificationAuthorization()
+      }
+    }
     if isAppSmokeTesting { scheduleAppSmokeTest() }
     if isMultiProjectUIStressTesting { scheduleMultiProjectUIStressTest() }
   }
@@ -89,6 +100,21 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
   func applicationWillTerminate(_ notification: Notification) {
     saveMainWindowLayout()
     OperatorDebugLog.record("app.terminate", "Operator is terminating", level: .info)
+  }
+
+  private func configurePowerObservers() {
+    guard powerObservers.isEmpty else { return }
+    let center = NSWorkspace.shared.notificationCenter
+    powerObservers = [
+      center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
+        [weak self] _ in
+        Task { @MainActor in self?.controller.handleSystemSleep() }
+      },
+      center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
+        [weak self] _ in
+        Task { @MainActor in self?.controller.handleSystemWake() }
+      },
+    ]
   }
 
   func showWorkspace() {
@@ -371,6 +397,35 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
       store.presentRecoveryMessageForMountedUITest(
         "Operator restored your workspace. Interrupted sessions were marked as needing attention.")
       let recoveryToastPresented = store.recoveryMessage != nil
+      var previewFilePresented = true
+      if let previewPath = environment["OPERATOR_MULTI_PROJECT_PREVIEW_FILE"],
+        !previewPath.isEmpty
+      {
+        controller.openFile(previewPath)
+        previewFilePresented =
+          controller.selectedTab?.layout.firstFilePane?.path
+          == URL(fileURLWithPath: previewPath).standardizedFileURL.resolvingSymlinksInPath().path
+        if !previewFilePresented {
+          throw multiProjectUIStressError(
+            controller.alertMessage ?? "Operator could not open the requested preview file.")
+        }
+        if let markdownPath = environment["OPERATOR_MULTI_PROJECT_SPLIT_MARKDOWN"],
+          !markdownPath.isEmpty
+        {
+          controller.splitFocusedTerminal(.horizontal)
+          guard let emptyPaneID = controller.terminalLayout?.emptyPaneIDs.first else {
+            throw multiProjectUIStressError("Operator could not create the preview split.")
+          }
+          controller.selectEmptyPane(emptyPaneID)
+          controller.openMarkdown(markdownPath)
+          let markdownPath = URL(fileURLWithPath: markdownPath).standardizedFileURL
+            .resolvingSymlinksInPath().path
+          previewFilePresented =
+            controller.selectedTab?.contentKind == .mixed
+            && controller.terminalLayout?.markdownPane(forPath: markdownPath)?.id == emptyPaneID
+        }
+        store.dismissRecoveryMessage()
+      }
 
       let screenshotURL = artifactDirectory.appendingPathComponent(
         "five-projects-split-pane.png")
@@ -388,6 +443,7 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         "selectedTabShowsActiveOutput": selectedTabShowsActiveOutput,
         "backgroundTabShowsUnreadOutput": backgroundTabShowsUnreadOutput,
         "floatingRecoveryToastPresented": recoveryToastPresented,
+        "previewFilePresented": previewFilePresented,
         "tabRenamePersists": tabRenamePersisted,
         "projectTabsDefaultOpen": projectTabsDefaultedOpen,
         "sidebarExpansionStatePersists":
@@ -409,7 +465,9 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         statePath: store.stateFileURL.path, screenshotPath: screenshotURL.path, checks: checks,
         projects: projectResults, error: nil)
 
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+      let screenshotDelay =
+        environment["OPERATOR_MULTI_PROJECT_SPLIT_MARKDOWN"]?.isEmpty == false ? 1.8 : 0.6
+      DispatchQueue.main.asyncAfter(deadline: .now() + screenshotDelay) { [weak self] in
         guard let self else { return }
         var report = baseReport
         do {
@@ -470,7 +528,9 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
       exit(1)
     }
     if report.passed {
-      NSApp.terminate(nil)
+      if !ProcessInfo.processInfo.arguments.contains("--hold-ui-stress-preview") {
+        NSApp.terminate(nil)
+      }
     } else {
       exit(1)
     }
@@ -711,13 +771,29 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     Task { @MainActor [weak self] in
       if let rawID, let sessionID = UUID(uuidString: rawID) {
         self?.showWorkspace()
-        if let question = self?.controller.questions.first(where: { $0.sessionID == sessionID }) {
-          self?.controller.revealQuestion(question)
-        } else {
-          self?.controller.selectTerminal(sessionID)
+        switch response.actionIdentifier {
+        case OperatorNotifications.Action.retry.rawValue:
+          self?.controller.retrySession(sessionID)
+        case OperatorNotifications.Action.focusQuestion.rawValue:
+          self?.controller.focusQuestion(for: sessionID)
+        case OperatorNotifications.Action.openFailedHarness.rawValue:
+          self?.controller.revealSession(sessionID)
+        default:
+          if let question = self?.controller.questions.first(where: { $0.sessionID == sessionID }) {
+            self?.controller.revealQuestion(question)
+          } else {
+            self?.controller.revealSession(sessionID)
+          }
         }
       }
       completionHandler()
     }
+  }
+
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler([.banner, .sound])
   }
 }

@@ -237,6 +237,11 @@ struct OperatorIntegrationTests {
       OperatorCommandClient.normalizedLayoutCommand(arguments: ["split-down", "extra"]) == nil)
   }
 
+  @Test func operatorHelpIsAvailableWithoutAnOperatorSocket() {
+    #expect(OperatorCommandClient.help(arguments: ["help"]) == 0)
+    #expect(OperatorCommandClient.help(arguments: ["help", "extra"]) == 64)
+  }
+
   @MainActor
   @Test func missionControlBuildsAndCollapsesNativeGridLayout() throws {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
