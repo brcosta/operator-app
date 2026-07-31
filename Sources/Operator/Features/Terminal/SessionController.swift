@@ -1269,9 +1269,11 @@ final class OperatorTerminalView: LocalProcessTerminalView {
     return window.makeFirstResponder(self)
   }
 
-  func apply(_ rawPreferences: TerminalPreferences) {
-    if appliedColorPalette == nil {
-      let palette = TerminalColorPalette.iTermDefault
+  func apply(
+    _ rawPreferences: TerminalPreferences,
+    palette: TerminalColorPalette = .iTermDark
+  ) {
+    if appliedColorPalette != palette {
       palette.apply(to: self)
       appliedColorPalette = palette
     }
@@ -1316,20 +1318,25 @@ final class OperatorTerminalView: LocalProcessTerminalView {
 
 struct TerminalHost: NSViewRepresentable {
   @ObservedObject var session: TerminalSession
+  @Environment(\.colorScheme) private var colorScheme
   let preferences: TerminalPreferences
+
+  private var colorPalette: TerminalColorPalette {
+    TerminalColorPalette.default(for: colorScheme)
+  }
 
   func makeCoordinator() -> Coordinator { Coordinator(session: session) }
 
   @MainActor func makeNSView(context: Context) -> LocalProcessTerminalView {
     let terminal = session.terminalView ?? makeTerminalView()
     terminal.removeFromSuperview()
-    (terminal as? OperatorTerminalView)?.apply(preferences)
+    (terminal as? OperatorTerminalView)?.apply(preferences, palette: colorPalette)
     session.attach(terminal, delegate: context.coordinator)
     return terminal
   }
 
   @MainActor func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-    (nsView as? OperatorTerminalView)?.apply(preferences)
+    (nsView as? OperatorTerminalView)?.apply(preferences, palette: colorPalette)
   }
 
   final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
@@ -1350,7 +1357,7 @@ struct TerminalHost: NSViewRepresentable {
     let terminal = OperatorTerminalView(frame: .zero)
     terminal.installEditShortcutMonitor()
     terminal.autoresizingMask = [.width, .height]
-    terminal.apply(preferences)
+    terminal.apply(preferences, palette: colorPalette)
     return terminal
   }
 }

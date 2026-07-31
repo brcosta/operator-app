@@ -533,12 +533,12 @@ private struct EmptyWorkspaceLauncher: View {
               ) {
                 EmptyPaneAction(
                   title: "Codex", subtitle: "Coding agent",
-                  symbol: HarnessKind.codex.symbolName, color: .blue
+                  harness: .codex, color: .blue
                 ) { startHarness(.codex) }
                 .accessibilityIdentifier("operator.emptyWorkspace.startCodex")
                 EmptyPaneAction(
                   title: "Claude Code", subtitle: "Coding agent",
-                  symbol: HarnessKind.claudeCode.symbolName, color: .green
+                  harness: .claudeCode, color: .green
                 ) { startHarness(.claudeCode) }
                 .accessibilityIdentifier("operator.emptyWorkspace.startClaude")
                 EmptyPaneAction(
@@ -940,11 +940,11 @@ private struct EmptySplitPane: View {
           ) {
             EmptyPaneAction(
               title: "Codex", subtitle: "Coding agent",
-              symbol: "chevron.left.forwardslash.chevron.right",
+              harness: .codex,
               color: .blue
             ) { startHarness(.codex) }
             EmptyPaneAction(
-              title: "Claude Code", subtitle: "Coding agent", symbol: "sparkles",
+              title: "Claude Code", subtitle: "Coding agent", harness: .claudeCode,
               color: .green
             ) { startHarness(.claudeCode) }
             EmptyPaneAction(
@@ -976,17 +976,23 @@ private struct EmptySplitPane: View {
 private struct EmptyPaneAction: View {
   let title: String
   let subtitle: String
-  let symbol: String
+  var symbol: String? = nil
+  var harness: HarnessKind? = nil
   let color: Color
   let action: () -> Void
 
   var body: some View {
     Button(action: action) {
       HStack(spacing: 10) {
-        Image(systemName: symbol)
-          .font(.body.weight(.semibold))
-          .foregroundStyle(color)
-          .frame(width: 22)
+        if let harness {
+          HarnessIdentityMark(kind: harness, size: 21)
+            .frame(width: 22, height: 22)
+        } else if let symbol {
+          Image(systemName: symbol)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(color)
+            .frame(width: 22)
+        }
         VStack(alignment: .leading, spacing: 1) {
           Text(title).font(.callout.weight(.semibold))
           Text(subtitle).font(.caption2).foregroundStyle(.secondary)
@@ -1159,6 +1165,7 @@ private struct SidebarView: View {
           VStack(alignment: .leading, spacing: 0) {
             projectRow(project, hasTabs: !projectTabs.isEmpty)
               .accessibilityIdentifier("operator.project.\(project.id.uuidString)")
+              .accessibilityLabel(project.name)
               .help(project.workspaces.first?.directory ?? "")
               .contextMenu {
                 Button("Add Workspace") { repositoryProject = project }
@@ -1705,6 +1712,7 @@ private struct ProjectEditor: View {
             HStack(spacing: 14) {
               ProjectEmojiPicker(emoji: $emoji)
                 .accessibilityIdentifier("operator.projectEditor.emoji")
+                .accessibilityValue(emoji.isEmpty ? "None selected" : emoji)
               Spacer()
               ForEach(ProjectAccent.allCases) { choice in
                 Button {
@@ -2264,11 +2272,47 @@ struct HarnessIdentityMark: View {
   var size: CGFloat = 12
 
   var body: some View {
-    Image(systemName: kind.symbolName)
-      .font(.system(size: size * 0.8, weight: .semibold))
-      .foregroundStyle(kind.accentColor)
-      .frame(width: size, height: size)
-      .help(kind.displayName)
-      .accessibilityLabel(kind.displayName)
+    Group {
+      if let image = HarnessBrandAssets.image(for: kind) {
+        Image(nsImage: image)
+          .resizable()
+          .renderingMode(kind == .codex ? .template : .original)
+          .foregroundStyle(kind.accentColor)
+          .aspectRatio(contentMode: .fit)
+      } else {
+        Image(systemName: kind.symbolName)
+          .font(.system(size: size * 0.8, weight: .semibold))
+          .foregroundStyle(kind.accentColor)
+      }
+    }
+    .frame(width: size, height: size)
+    .help(kind.displayName)
+    .accessibilityLabel(kind.displayName)
   }
+}
+
+enum HarnessBrandAssets {
+  static func resourceURL(for kind: HarnessKind) -> URL? {
+    let assetName: String
+    switch kind {
+    case .claudeCode: assetName = "claude-code"
+    case .codex: assetName = "codex"
+    case .generic: return nil
+    }
+    return resourceBundle.url(forResource: assetName, withExtension: "svg")
+  }
+
+  static func image(for kind: HarnessKind) -> NSImage? {
+    guard let url = resourceURL(for: kind), let image = NSImage(contentsOf: url) else { return nil }
+    if kind == .codex { image.isTemplate = true }
+    return image
+  }
+
+  private static let resourceBundle: Bundle = {
+    #if SWIFT_PACKAGE
+      .module
+    #else
+      .main
+    #endif
+  }()
 }
