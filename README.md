@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/brcosta/operator-app/actions/workflows/ci.yml"><img src="https://github.com/brcosta/operator-app/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-111827?logo=apple&logoColor=white" alt="macOS 14 or later">
-  <img src="https://img.shields.io/badge/version-0.1.0-2563eb" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/version-0.2.0-2563eb" alt="Version 0.2.0">
 </p>
 
 Operator is a native, local-first macOS workspace for interactive CLI harnesses such as Codex CLI, Claude Code, and any shell command. It turns a collection of terminal windows into a project-aware command center: launch work where it belongs, see what changed, answer questions when they matter, and resume the right context later.
@@ -170,7 +170,7 @@ The repository also includes native XCUITests and a multi-project UI stress test
 
 ## Versioning
 
-Operator follows [Semantic Versioning](https://semver.org/). `0.1.0` is the initial public baseline while APIs and workflows continue to evolve. `Config/Version.xcconfig` is the release-version source of truth; releases should receive a matching `vX.Y.Z` tag and an entry in [CHANGELOG.md](CHANGELOG.md).
+Operator follows [Semantic Versioning](https://semver.org/). `0.2.0` is the current public baseline while APIs and workflows continue to evolve. `Config/Version.xcconfig` is the release-version source of truth; releases should receive a matching `vX.Y.Z` tag and an entry in [CHANGELOG.md](CHANGELOG.md).
 
 ## License and third-party code
 
