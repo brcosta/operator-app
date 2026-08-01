@@ -42,10 +42,10 @@
       <section class="hero section-shell">
         <div class="hero-copy">
           <p class="eyebrow"><span class="live-dot"></span> Open source · Apache 2.0</p>
-          <h1>A macOS workspace<br>for <em>CLI agents.</em></h1>
+          <h1>Operator: your workspace<br>for <em>CLI agents.</em></h1>
           <p class="hero-lede">Run coding agents, shells, repositories, and worktrees from a project-based native app. Keep layouts, task notes, activity, and Git inspection together.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#get-started">Run from source <span aria-hidden="true">→</span></a>
+            <a class="button button-primary" href="#get-started">Build the release app <span aria-hidden="true">→</span></a>
             <a class="button button-quiet" href="https://github.com/brcosta/operator-app">View source <span aria-hidden="true">↗</span></a>
           </div>
           <div class="hero-proof" aria-label="Operator principles">
@@ -59,7 +59,7 @@
           <div class="visual-orbit orbit-two"></div>
           <div class="window-card">
             <div class="window-topbar"><span></span><span></span><span></span><b>operator / workspace</b></div>
-            <img src="assets/operator-workspaces.png" alt="Operator workspace showing project sessions and terminal split panes">
+            <img src="assets/operator-workspace-generic.png" alt="Operator workspace with Aurora, Harbor, and Lattice projects">
           </div>
           <div class="floating-status status-progress"><span class="status-icon">⌁</span><span><b>Agent activity</b><small>Reviewing changes</small></span><i></i></div>
           <div class="floating-status status-local"><span class="secure-dot"></span><span><b>Local session</b><small>Session-scoped helper</small></span></div>
@@ -134,9 +134,9 @@
 
       <section class="build-strip">
         <div class="section-shell build-grid">
-          <p class="eyebrow">Places to start</p>
-          <div><h2>First changes</h2><p>Add a command-palette action, change terminal settings, add a CLI harness adapter, or cover a restoration rule with a focused test.</p></div>
-          <a class="button button-outline" href="https://github.com/brcosta/operator-app/tree/main/Tests">Browse the tests <span aria-hidden="true">↗</span></a>
+          <p class="eyebrow">One focused workspace</p>
+          <div><h2>Operator keeps work together.</h2><p>Group projects, terminals, agents, files, and Git context in one native macOS window—then return exactly where you left off.</p></div>
+          <a class="button button-outline" href="#workflow">See how it works <span aria-hidden="true">→</span></a>
         </div>
       </section>
 
@@ -158,16 +158,17 @@
       <section id="get-started" class="section-shell start-section">
         <div class="start-panel">
           <div>
-            <p class="eyebrow">Run from source</p>
-            <h2>Build and run<br>the app locally.</h2>
-            <p>macOS 14+ and a Swift 6-compatible toolchain are all you need to get started.</p>
+            <p class="eyebrow">Build the release app</p>
+            <h2>Build Operator<br>for your Mac.</h2>
+            <p>Package the optimized app bundle, then launch it normally from Finder or Spotlight.</p>
             <div class="hero-actions"><a class="button button-primary" href="https://github.com/brcosta/operator-app">View on GitHub <span aria-hidden="true">↗</span></a><a class="button button-quiet" href="https://github.com/brcosta/operator-app/releases">Release notes <span aria-hidden="true">↗</span></a></div>
           </div>
-          <pre aria-label="Commands to run Operator from source"><code><span class="code-dim">$</span> git clone https://github.com/brcosta/operator-app.git
+          <pre aria-label="Commands to build the Operator release app"><code><span class="code-dim">$</span> git clone https://github.com/brcosta/operator-app.git
 <span class="code-dim">$</span> cd operator-app
-<span class="code-dim">$</span> swift run Operator
+<span class="code-dim">$</span> ./Scripts/package-app.sh
+<span class="code-dim">$</span> open dist/Operator.app
 
-<span class="code-success">✓</span> Operator is running</code></pre>
+<span class="code-success">✓</span> Operator is ready</code></pre>
         </div>
       </section>
     </main>

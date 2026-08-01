@@ -87,13 +87,11 @@ Operator stores project, profile, layout, and session-status metadata—but neve
 - macOS 14 or later
 - Xcode 16+ or another Swift 6-compatible toolchain
 
-### Run from source
+### Build the release app
 
 ```sh
-swift run Operator
-
-# Or, from any terminal, build and launch this checkout:
-./Scripts/run-operator.sh
+./Scripts/package-app.sh
+open dist/Operator.app
 ```
 
 Then:
@@ -101,12 +99,6 @@ Then:
 1. Add a project and its working directories from the sidebar.
 2. Press **Command-K** to launch Codex, Claude Code, a shell, or a custom command.
 3. Open a second session and use **Split** to compare work side by side.
-
-### Make an app bundle
-
-```sh
-./Scripts/package-app.sh
-```
 
 This creates `dist/Operator.app` and refuses to overwrite an existing bundle. The app is currently unsigned and unnotarized; macOS Gatekeeper may require manual approval.
 
