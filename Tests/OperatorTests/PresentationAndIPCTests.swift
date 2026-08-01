@@ -10,6 +10,13 @@ import WebKit
 #endif
 
 struct PresentationAndIPCTests {
+  @Test func nativeNotificationsRequireAnApplicationBundle() {
+    #expect(!OperatorRuntimeEnvironment.supportsNativeNotifications(
+      bundleURL: URL(fileURLWithPath: "/tmp/Operator")))
+    #expect(!OperatorRuntimeEnvironment.supportsNativeNotifications(
+      bundleURL: URL(fileURLWithPath: "/tmp/Operator.app")))
+  }
+
   @Test func emptySidebarDoesNotPresentAFilterMessage() {
     #expect(!SidebarEmptyState.shouldShowNoMatches(projectCount: 0, filter: ""))
     #expect(!SidebarEmptyState.shouldShowNoMatches(projectCount: 0, filter: "missing"))

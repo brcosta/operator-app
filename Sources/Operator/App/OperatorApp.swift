@@ -48,6 +48,9 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
   private var isMultiProjectUIStressTesting: Bool {
     ProcessInfo.processInfo.arguments.contains("--multi-project-ui-stress-test")
   }
+  private var supportsNativeNotifications: Bool {
+    OperatorRuntimeEnvironment.supportsNativeNotifications()
+  }
   private lazy var controller = WorkspaceController(store: store, restoreAutomatically: true)
   private var window: NSWindow?
   private var integration: OperatorIntegration?
@@ -63,12 +66,20 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     OperatorDebugLog.record(
       "app.launch", "Operator finished launching",
       level: .info, metadata: ["uiTesting": String(isUITesting)])
-    controller.notificationAuthorizationHandler = { [weak self] in
-      guard let self else { return false }
-      return await OperatorNotifications.activate(delegate: self)
-    }
-    controller.notificationAuthorizationStatusHandler = {
-      await OperatorNotifications.authorizationState()
+    if supportsNativeNotifications {
+      controller.notificationAuthorizationHandler = { [weak self] in
+        guard let self else { return false }
+        return await OperatorNotifications.activate(delegate: self)
+      }
+      controller.notificationAuthorizationStatusHandler = {
+        await OperatorNotifications.authorizationState()
+      }
+    } else {
+      OperatorDebugLog.record(
+        "notifications.unavailable",
+        "Native notifications require a bundled Operator.app; they are disabled for this launch.",
+        level: .info
+      )
     }
     applyAppearance(store.state.appearance)
     configureDockIcon()
@@ -83,7 +94,7 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     configurePowerObservers()
     showWorkspace()
     if !isUITesting { controller.activateResourceMonitoring() }
-    if !isUITesting {
+    if !isUITesting, supportsNativeNotifications {
       Task { @MainActor [weak self] in
         await self?.controller.refreshNotificationAuthorization()
       }

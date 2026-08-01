@@ -2913,7 +2913,13 @@ enum HarnessBrandAssets {
     case .codex: assetName = "codex"
     case .generic: return nil
     }
-    return resourceBundle.url(forResource: assetName, withExtension: "svg")
+    return resourceDirectories.lazy.compactMap { directory in
+      let resource = directory
+        .appendingPathComponent("Operator_Operator.bundle", isDirectory: true)
+        .appendingPathComponent(assetName)
+        .appendingPathExtension("svg")
+      return FileManager.default.isReadableFile(atPath: resource.path) ? resource : nil
+    }.first
   }
 
   static func image(for kind: HarnessKind) -> NSImage? {
@@ -2922,11 +2928,40 @@ enum HarnessBrandAssets {
     return image
   }
 
-  private static let resourceBundle: Bundle = {
-    #if SWIFT_PACKAGE
-      .module
-    #else
-      .main
-    #endif
-  }()
+  /// `Bundle.module` traps when a SwiftPM resource bundle is missing. Brand marks
+  /// are decorative, so resolve the known bundle locations defensively and let
+  /// `HarnessIdentityMark` fall back to a system symbol if none are available.
+  private static var resourceDirectories: [URL] {
+    let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0])
+      .deletingLastPathComponent()
+    // In SwiftPM tests the executable lives inside an `.xctest` bundle while
+    // resources remain in the build-products directory. Include a small,
+    // deterministic set of ancestors so the same safe lookup works there too.
+    var directories = [Bundle.main.resourceURL, Bundle.main.bundleURL, executableDirectory]
+      .compactMap { $0 }
+    var ancestor = executableDirectory
+    for _ in 0 ..< 5 {
+      directories.append(ancestor)
+      ancestor.deleteLastPathComponent()
+    }
+
+    // `swift test` normally starts from the package root. SwiftPM leaves its
+    // resource bundle in an architecture-specific build-products directory,
+    // outside the `.xctest` bundle hierarchy above.
+    let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let buildRoot = workingDirectory.appendingPathComponent(".build", isDirectory: true)
+    if let buildProducts = try? FileManager.default.contentsOfDirectory(
+      at: buildRoot,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    ) {
+      for productDirectory in buildProducts {
+        directories.append(productDirectory.appendingPathComponent("debug", isDirectory: true))
+        directories.append(productDirectory.appendingPathComponent("release", isDirectory: true))
+      }
+    }
+
+    var seen = Set<String>()
+    return directories.filter { seen.insert($0.standardizedFileURL.path).inserted }
+  }
 }

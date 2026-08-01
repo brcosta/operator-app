@@ -266,3 +266,16 @@ enum OperatorNotifications {
     ]
   }
 }
+
+enum OperatorRuntimeEnvironment {
+  /// UserNotifications requires an application bundle registered with
+  /// LaunchServices. A SwiftPM executable (`swift run Operator`) has no bundle
+  /// proxy and macOS raises an Objective-C exception before Swift can handle it.
+  static func supportsNativeNotifications(bundleURL: URL = Bundle.main.bundleURL) -> Bool {
+    guard bundleURL.pathExtension.caseInsensitiveCompare("app") == .orderedSame else {
+      return false
+    }
+    return FileManager.default.fileExists(
+      atPath: bundleURL.appendingPathComponent("Contents/Info.plist").path)
+  }
+}
