@@ -91,6 +91,9 @@ Operator stores project, profile, layout, and session-status metadata—but neve
 
 ```sh
 swift run Operator
+
+# Or, from any terminal, build and launch this checkout:
+./Scripts/run-operator.sh
 ```
 
 Then:

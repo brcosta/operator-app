@@ -30,6 +30,29 @@ struct TerminalSessionTests {
     #expect(session.launchEnvironment["LC_ALL"] == "en_US.UTF-8")
   }
 
+  @Test func interactiveLoginShellLoadsZshrcExportsBeforeLaunchingAHarness() throws {
+    let dotDirectory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(dotDirectory) }
+    try "export OPERATOR_ZSHRC_REGRESSION=available\n".write(
+      to: dotDirectory.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    process.arguments = [
+      TerminalSession.interactiveLoginCommandFlag,
+      "printf %s \"$OPERATOR_ZSHRC_REGRESSION\"",
+    ]
+    process.environment = ProcessInfo.processInfo.environment.merging(
+      ["ZDOTDIR": dotDirectory.path], uniquingKeysWith: { _, replacement in replacement })
+    let output = Pipe()
+    process.standardOutput = output
+    try process.run()
+    process.waitUntilExit()
+
+    #expect(process.terminationStatus == 0)
+    #expect(String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "available")
+  }
+
   @Test func codexUsesClaudeCompatibleLegacyKeyboardHandlingOnlyInsideItsSession() {
     let codex = TerminalSession(
       request: LaunchRequest(

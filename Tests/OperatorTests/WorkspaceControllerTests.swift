@@ -443,29 +443,43 @@ struct WorkspaceControllerTests {
     #expect(store.state.projectTabs.values.flatMap { $0 }.contains(where: { $0.id == splitTabID }))
   }
 
-  @Test func tabAndProjectNavigationInvalidatesCodexPanelHosts() throws {
-    let root = try TestSupport.temporaryDirectory()
-    let secondDirectory = root.appendingPathComponent("second")
-    try FileManager.default.createDirectory(at: secondDirectory, withIntermediateDirectories: true)
-    defer { TestSupport.remove(root) }
-    let store = StateStore(fileURL: root.appendingPathComponent("state.json"))
-    store.addProject(name: "First", directory: root.path)
-    let firstProject = try #require(store.state.projects.first)
-    store.addProject(name: "Second", directory: secondDirectory.path)
-    let secondProject = try #require(store.state.projects.last)
+  @Test func claudeProjectSupportsSplitAndSeparateClaudeTabs() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
+    store.addProject(name: "Claude project", directory: directory.path)
+    let project = try #require(store.state.projects.first)
     let controller = WorkspaceController(store: store)
 
-    controller.selectProject(firstProject.id)
-    controller.launchHarnessForTesting(.codex)
-    let firstTabID = try #require(controller.selectedTabID)
-    let afterLaunch = controller.codexPanelRefreshRevision
+    // First Claude session starts the project's initial tab.
+    controller.launchHarnessForTesting(.claudeCode)
+    let first = try #require(controller.selectedSession)
+    let splitTabID = try #require(controller.selectedTabID)
 
-    controller.selectTab(firstTabID)
-    #expect(controller.codexPanelRefreshRevision > afterLaunch)
-    let afterTabSwitch = controller.codexPanelRefreshRevision
+    // A second Claude session fills an explicit split in that same tab.
+    controller.splitFocusedTerminal(.horizontal)
+    let emptyPaneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
+    controller.launchHarnessForTesting(.claudeCode, intoPane: emptyPaneID)
+    let second = try #require(controller.selectedSession)
+    let splitLayout = try #require(controller.terminalLayout)
+    #expect(controller.selectedTabID == splitTabID)
+    #expect(splitLayout.isSplit)
+    #expect(splitLayout.contains(first.id))
+    #expect(splitLayout.contains(second.id))
 
-    controller.selectProject(secondProject.id)
-    #expect(controller.codexPanelRefreshRevision > afterTabSwitch)
+    // Launching without a target pane creates a third Claude session in its own tab.
+    controller.selectTab(splitTabID)
+    controller.launchHarnessForTesting(.claudeCode)
+    let third = try #require(controller.selectedSession)
+    let separateTabID = try #require(controller.selectedTabID)
+    #expect(separateTabID != splitTabID)
+    #expect(controller.tabs.count == 2)
+    #expect(controller.terminalLayout == .terminal(third.id))
+    #expect(controller.tabs.first(where: { $0.id == splitTabID })?.layout.contains(first.id) == true)
+    #expect(controller.tabs.first(where: { $0.id == splitTabID })?.layout.contains(second.id) == true)
+    #expect(controller.tabs.first(where: { $0.id == splitTabID })?.layout.contains(third.id) == false)
+    #expect(controller.sessions.allSatisfy { $0.request.projectID == project.id })
+    #expect(store.state.projectTabs[project.id]?.count == 2)
   }
 
   @Test func switchingProjectsRestoresTheSelectedTabsCompleteSplitTree() throws {

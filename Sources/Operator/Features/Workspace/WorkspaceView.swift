@@ -1210,19 +1210,10 @@ private struct TerminalPaneView: View {
       session: session, preferences: controller.store.state.terminalPreferences,
       shouldFocus: isFocused
     )
-    .id(
-      TerminalHostIdentity(
-        sessionID: session.id,
-        refreshRevision: session.request.harness == .codex
-          ? controller.codexPanelRefreshRevision : 0))
+    .id(session.id)
     .onTapGesture(perform: select)
   }
 
-}
-
-private struct TerminalHostIdentity: Hashable {
-  let sessionID: UUID
-  let refreshRevision: Int
 }
 
 private final class OperatorSplitView: NSSplitView {
@@ -1670,7 +1661,6 @@ private struct SidebarView: View {
 
           VStack(alignment: .leading, spacing: 0) {
             projectRow(project, hasTabs: !projectTabs.isEmpty)
-              .accessibilityIdentifier("operator.project.\(project.id.uuidString)")
               .accessibilityLabel(project.name)
               .help(project.workspaces.first?.directory ?? "")
               .contextMenu {
@@ -1862,6 +1852,7 @@ private struct SidebarView: View {
         }
       }
       .buttonStyle(.plain)
+      .accessibilityIdentifier("operator.project.\(project.id.uuidString)")
       .frame(maxWidth: .infinity, alignment: .leading)
       .contentShape(Rectangle())
       Spacer(minLength: 6)
@@ -1914,9 +1905,6 @@ private struct SidebarView: View {
       in: RoundedRectangle(cornerRadius: 8)
     )
     .animation(OperatorMotion.quick(reduceMotion: reduceMotion), value: isSelected)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(projectAccessibilityLabel(project))
-    .accessibilityValue(isSelected ? "Selected" : "Not selected")
   }
 
   private func sidebarTabRow(_ tab: WorkspaceTab, project: Project) -> some View {

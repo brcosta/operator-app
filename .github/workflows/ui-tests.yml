@@ -29,7 +29,8 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
-            CODE_SIGNING_ALLOWED=NO 2>&1 | tee xcodebuild.log
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- 2>&1 | tee xcodebuild.log
           status=${PIPESTATUS[0]}
           set -e
           if [[ "$status" -ne 0 ]]; then
