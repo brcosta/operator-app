@@ -128,7 +128,6 @@ The native Changes tab groups staged, unstaged, and untracked files and supports
 ```sh
 operator split-right
 operator split-down
-operator layout mission-control
 ```
 
 The request is scoped to the terminal that issued it, even if another pane currently has UI focus.

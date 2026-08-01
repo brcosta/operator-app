@@ -663,8 +663,8 @@ final class WorkspaceController: ObservableObject {
     }
     let command: String
     switch kind {
-    case .codex: command = "codex"
-    case .claudeCode: command = "claude"
+    case .codex: command = HarnessLaunchArguments.command("codex", arguments: store.state.integrationPreferences.codexAdditionalArguments)
+    case .claudeCode: command = HarnessLaunchArguments.command("claude", arguments: store.state.integrationPreferences.claudeAdditionalArguments)
     case .generic:
       alertMessage = "Choose Codex or Claude Code from the empty workspace launcher."
       return
@@ -1534,21 +1534,6 @@ final class WorkspaceController: ObservableObject {
     persistCurrentTabs()
   }
 
-  func missionControlLayout() {
-    let panes = terminalLayout?.panesInDisplayOrder ?? []
-    guard panes.count >= 2 else { return }
-    func pair(_ first: TerminalLayout, _ second: TerminalLayout) -> TerminalLayout {
-      .split(.horizontal, first, second)
-    }
-    let rows = stride(from: 0, to: panes.count, by: 2).map { index -> TerminalLayout in
-      guard index + 1 < panes.count else { return panes[index] }
-      return pair(panes[index], panes[index + 1])
-    }
-    terminalLayout = rows.dropFirst().reduce(rows[0]) { .split(.vertical, $0, $1) }
-    if let terminalLayout { updateSelectedTab { $0.layout = terminalLayout } }
-    persistCurrentTabs()
-  }
-
   func applyLayout(command: String, sessionID: UUID? = nil) {
     if let sessionID, let session = session(with: sessionID) {
       if let projectID = session.request.projectID, projectID != store.state.selectedProjectID {
@@ -1557,7 +1542,6 @@ final class WorkspaceController: ObservableObject {
       selectTerminal(sessionID)
     }
     switch command {
-    case "mission-control": missionControlLayout()
     case "split-right", "split-bottom":
       splitFocusedTerminal(command == "split-right" ? .horizontal : .vertical)
       return

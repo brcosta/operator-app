@@ -111,52 +111,63 @@ struct WorkspaceView: View {
           SidebarView(store: store, controller: controller)
             .navigationSplitViewColumnWidth(min: 235, ideal: 255, max: 320)
         } detail: {
-          HStack(spacing: 0) {
-            ZStack(alignment: .top) {
-              VStack(spacing: 0) {
-                if hasOpenContent {
-                  sessionTabs
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                  Divider()
-                    .transition(.opacity)
+          ZStack(alignment: .topTrailing) {
+            HStack(spacing: 0) {
+              ZStack(alignment: .top) {
+                VStack(spacing: 0) {
+                  if hasOpenContent {
+                    sessionTabs
+                      .transition(.opacity.combined(with: .move(edge: .top)))
+                    Divider()
+                      .transition(.opacity)
+                  }
+                  terminalArea
                 }
-                terminalArea
+                .animation(
+                  OperatorMotion.standard(reduceMotion: reduceMotion), value: hasOpenContent)
+                reliabilityToast
+                  .frame(maxWidth: OperatorMotion.toastMaximumWidth)
+                  .padding(.horizontal, 14)
+                  .padding(.top, 12)
+                  .onHover { recoveryToastHovered = $0 }
+                  .transition(
+                    .move(edge: .top)
+                      .combined(with: .opacity)
+                      .combined(with: .scale(scale: 0.98, anchor: .top))
+                  )
+                  .zIndex(20)
               }
               .animation(
-                OperatorMotion.standard(reduceMotion: reduceMotion), value: hasOpenContent)
-              reliabilityToast
-                .frame(maxWidth: OperatorMotion.toastMaximumWidth)
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .onHover { recoveryToastHovered = $0 }
-                .transition(
-                  .move(edge: .top)
-                    .combined(with: .opacity)
-                    .combined(with: .scale(scale: 0.98, anchor: .top))
+                OperatorMotion.toast(reduceMotion: reduceMotion), value: store.persistenceMessage
+              )
+              .animation(
+                OperatorMotion.toast(reduceMotion: reduceMotion), value: store.recoveryMessage)
+
+              if fileNavigatorVisible, let root = selectedProjectRoot {
+                Divider()
+                ProjectFileNavigator(
+                  root: root,
+                  openFile: controller.openFile,
+                  close: { fileNavigatorVisible = false },
+                  fileWatchingEnabled: store.state.integrationPreferences.fileWatchingEnabled
                 )
-                .zIndex(20)
+                .frame(width: 290)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+              }
             }
             .animation(
-              OperatorMotion.toast(reduceMotion: reduceMotion), value: store.persistenceMessage
+              OperatorMotion.standard(reduceMotion: reduceMotion), value: fileNavigatorVisible
             )
-            .animation(
-              OperatorMotion.toast(reduceMotion: reduceMotion), value: store.recoveryMessage)
 
-            if fileNavigatorVisible, let root = selectedProjectRoot {
-              Divider()
-              ProjectFileNavigator(
-                root: root,
-                openFile: controller.openFile,
-                close: { fileNavigatorVisible = false },
-                fileWatchingEnabled: store.state.integrationPreferences.fileWatchingEnabled
+            if selectedProject != nil, !fileNavigatorVisible {
+              FileNavigatorToggleButton(
+                isVisible: fileNavigatorVisible,
+                toggle: { fileNavigatorVisible.toggle() }
               )
-              .frame(width: 290)
-              .transition(.move(edge: .trailing).combined(with: .opacity))
+              .padding(.top, FileNavigatorChrome.floatingTopInset)
+              .padding(.trailing, FileNavigatorChrome.headerInset)
             }
           }
-          .animation(
-            OperatorMotion.standard(reduceMotion: reduceMotion), value: fileNavigatorVisible
-          )
           .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
               if selectedProject != nil {
@@ -185,23 +196,6 @@ struct WorkspaceView: View {
                 }
                 .operatorShortcut(controller.store.shortcut(for: .taskBrief))
                 .help("Edit Task Brief")
-                if controller.sessions.count >= 2 {
-                  Button {
-                    controller.missionControlLayout()
-                  } label: {
-                    Label("Mission Control", systemImage: "square.grid.2x2")
-                  }
-                  .operatorShortcut(controller.store.shortcut(for: .missionControl))
-                  .help("Arrange panes in Mission Control")
-                }
-                if selectedSession.status == .running {
-                  Button {
-                    selectedSession.terminate()
-                  } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                  }
-                  .help("Stop the focused terminal")
-                }
                 Button {
                   controller.restart(selectedSession)
                 } label: {
@@ -249,17 +243,6 @@ struct WorkspaceView: View {
               }
               .help("Open settings and keyboard shortcuts")
               .accessibilityIdentifier("operator.shortcuts")
-              if selectedProject != nil {
-                Button {
-                  fileNavigatorVisible.toggle()
-                } label: {
-                  Label(
-                    fileNavigatorVisible ? "Hide Files" : "Show Files",
-                    systemImage: "sidebar.trailing")
-                }
-                .help(fileNavigatorVisible ? "Hide file navigator" : "Show file navigator")
-                .accessibilityIdentifier("operator.fileNavigator.toggle")
-              }
             }
           }
         }
@@ -909,6 +892,28 @@ private struct OnboardingStep: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 12).padding(.vertical, 9)
+  }
+}
+
+private struct FileNavigatorToggleButton: View {
+  let isVisible: Bool
+  let toggle: () -> Void
+
+  var body: some View {
+    Button(action: toggle) {
+      Image(systemName: "sidebar.trailing")
+        .font(.body.weight(.medium))
+        .frame(
+          width: FileNavigatorChrome.controlSize,
+          height: FileNavigatorChrome.controlSize
+        )
+        .background(.ultraThinMaterial, in: Circle())
+    }
+    .buttonStyle(.plain)
+    .contentShape(Circle())
+    .help(isVisible ? "Hide file navigator" : "Show file navigator")
+    .accessibilityLabel(isVisible ? "Hide Files" : "Show Files")
+    .accessibilityIdentifier("operator.fileNavigator.toggle")
   }
 }
 

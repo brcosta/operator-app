@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-  case newSession, closePane, splitPane, missionControl, changes, activity, taskBrief,
+  case newSession, closePane, splitPane, changes, activity, taskBrief,
     newProject, previousPane, nextPane, previousProject, nextProject
   var id: String { rawValue }
   var title: String {
@@ -11,7 +11,6 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case .newSession: "New Session"
     case .closePane: "Close Pane"
     case .splitPane: "Split Pane"
-    case .missionControl: "Mission Control"
     case .changes: "Open Changes"
     case .activity: "Activity"
     case .taskBrief: "Task Brief"
@@ -57,7 +56,6 @@ struct ShortcutBinding: Codable, Hashable, Identifiable {
   static let defaults: [ShortcutBinding] = [
     .init(action: .newSession, key: "k"), .init(action: .closePane, key: "w"),
     .init(action: .splitPane, key: "\\"),
-    .init(action: .missionControl, key: "m", shift: true),
     .init(action: .changes, key: "g", shift: true),
     .init(action: .activity, key: "a", shift: true),
     .init(action: .taskBrief, key: "b", shift: true),
@@ -108,6 +106,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
   case general
   case terminal
   case colors
+  case harnesses
   case integrations
   case shortcuts
   case data
@@ -119,6 +118,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
     case .general: "General"
     case .terminal: "Terminal"
     case .colors: "Terminal Colors"
+    case .harnesses: "Harness Launch"
     case .integrations: "Privacy & Integrations"
     case .shortcuts: "Shortcuts"
     case .data: "Data & Diagnostics"
@@ -130,6 +130,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
     case .general: "Appearance and workspace layout"
     case .terminal: "Typography, ligatures, and history"
     case .colors: "Dark palette and iTerm2 import"
+    case .harnesses: "Optional arguments for new Claude and Codex sessions"
     case .integrations: "Control optional harness and file integrations"
     case .shortcuts: "Keyboard commands for daily actions"
     case .data: "Configuration, backups, and support"
@@ -141,6 +142,7 @@ enum OperatorSettingsSection: String, CaseIterable, Identifiable {
     case .general: "slider.horizontal.3"
     case .terminal: "terminal"
     case .colors: "paintpalette"
+    case .harnesses: "command.circle"
     case .integrations: "hand.raised"
     case .shortcuts: "keyboard"
     case .data: "externaldrive"
@@ -256,6 +258,8 @@ struct ShortcutSettingsView: View {
       terminalPage
     case .colors:
       colorsPage
+    case .harnesses:
+      harnessesPage
     case .integrations:
       integrationsPage
     case .shortcuts:
@@ -513,6 +517,43 @@ struct ShortcutSettingsView: View {
     }
   }
 
+  private var harnessesPage: some View {
+    SettingsPage(
+      title: OperatorSettingsSection.harnesses.title,
+      subtitle: OperatorSettingsSection.harnesses.subtitle
+    ) {
+      GroupBox("New harness sessions") {
+        VStack(spacing: 0) {
+          SettingsControlRow(
+            title: "Claude Code arguments",
+            detail: "Appended only when Operator starts a new Claude Code session."
+          ) {
+            TextField(
+              "For example: --permission-mode acceptEdits",
+              text: harnessArgumentsBinding(\.claudeAdditionalArguments)
+            )
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 340)
+            .accessibilityIdentifier("operator.settings.claudeArguments")
+          }
+          Divider()
+          SettingsControlRow(
+            title: "Codex arguments",
+            detail: "Appended only when Operator starts a new Codex session."
+          ) {
+            TextField(
+              "For example: --full-auto",
+              text: harnessArgumentsBinding(\.codexAdditionalArguments)
+            )
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 340)
+            .accessibilityIdentifier("operator.settings.codexArguments")
+          }
+        }
+      }
+    }
+  }
+
   private var shortcutsPage: some View {
     SettingsPage(
       title: OperatorSettingsSection.shortcuts.title,
@@ -727,6 +768,18 @@ struct ShortcutSettingsView: View {
       set: { value in
         var preferences = store.state.integrationPreferences
         preferences[keyPath: keyPath] = value
+        applyIntegrationPreferences(preferences)
+      })
+  }
+
+  private func harnessArgumentsBinding(
+    _ keyPath: WritableKeyPath<OperatorIntegrationPreferences, String>
+  ) -> Binding<String> {
+    Binding(
+      get: { store.state.integrationPreferences[keyPath: keyPath] },
+      set: { value in
+        var preferences = store.state.integrationPreferences
+        preferences[keyPath: keyPath] = HarnessLaunchArguments.normalized(value)
         applyIntegrationPreferences(preferences)
       })
   }

@@ -151,7 +151,7 @@ enum OperatorCommandClient {
   static func layout(arguments: [String]) -> Int32 {
     guard let command = normalizedLayoutCommand(arguments: arguments) else {
       writeError(
-        "Usage: operator layout <mission-control|split-right|split-bottom> (or operator split-down)\n"
+        "Usage: operator layout <split-right|split-bottom> (or operator split-down)\n"
       )
       return 64
     }
@@ -170,7 +170,7 @@ enum OperatorCommandClient {
       return nil
     }
     switch rawCommand {
-    case "mission-control", "split-right", "split-bottom": return rawCommand
+    case "split-right", "split-bottom": return rawCommand
     case "split-down": return "split-bottom"
     default: return nil
     }
@@ -443,7 +443,7 @@ private final class UnixSocketServer {
         onOpenMarkdown(path, sessionID)
       case "layout":
         guard let layout = request.layout,
-          ["mission-control", "split-right", "split-bottom"].contains(layout)
+          ["split-right", "split-bottom"].contains(layout)
         else { throw OperatorIPCError.invalidRequest }
         onLayout(layout, sessionID)
       case "question":

@@ -801,8 +801,49 @@ struct OperatorIntegrationPreferences: Codable, Hashable {
   /// This is a durable opt-out. Runtime notification delivery remains off until macOS grants it.
   var notificationsPermitted = true
   var fileWatchingEnabled = true
+  var claudeAdditionalArguments = ""
+  var codexAdditionalArguments = ""
+
+  enum CodingKeys: String, CodingKey {
+    case skillsEnabled, hooksEnabled, notificationsPermitted, fileWatchingEnabled
+    case claudeAdditionalArguments, codexAdditionalArguments
+  }
+
+  init(
+    skillsEnabled: Bool = true, hooksEnabled: Bool = true,
+    notificationsPermitted: Bool = true, fileWatchingEnabled: Bool = true,
+    claudeAdditionalArguments: String = "", codexAdditionalArguments: String = ""
+  ) {
+    self.skillsEnabled = skillsEnabled
+    self.hooksEnabled = hooksEnabled
+    self.notificationsPermitted = notificationsPermitted
+    self.fileWatchingEnabled = fileWatchingEnabled
+    self.claudeAdditionalArguments = claudeAdditionalArguments
+    self.codexAdditionalArguments = codexAdditionalArguments
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    skillsEnabled = try values.decodeIfPresent(Bool.self, forKey: .skillsEnabled) ?? true
+    hooksEnabled = try values.decodeIfPresent(Bool.self, forKey: .hooksEnabled) ?? true
+    notificationsPermitted = try values.decodeIfPresent(Bool.self, forKey: .notificationsPermitted) ?? true
+    fileWatchingEnabled = try values.decodeIfPresent(Bool.self, forKey: .fileWatchingEnabled) ?? true
+    claudeAdditionalArguments = try values.decodeIfPresent(String.self, forKey: .claudeAdditionalArguments) ?? ""
+    codexAdditionalArguments = try values.decodeIfPresent(String.self, forKey: .codexAdditionalArguments) ?? ""
+  }
 
   static let `default` = OperatorIntegrationPreferences()
+}
+
+enum HarnessLaunchArguments {
+  static func normalized(_ rawValue: String) -> String {
+    String(rawValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1_024))
+  }
+
+  static func command(_ executable: String, arguments: String) -> String {
+    let arguments = normalized(arguments)
+    return arguments.isEmpty ? executable : "\(executable) \(arguments)"
+  }
 }
 
 struct OperatorWindowLayout: Codable, Equatable {

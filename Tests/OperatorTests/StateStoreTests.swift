@@ -149,11 +149,11 @@ struct StateStoreTests {
     store.addProject(name: "One", directory: directory.path)
     store.addProject(name: "Two", directory: second.path)
     store.setShortcut(
-      ShortcutBinding(action: .missionControl, key: "9", command: false, control: true))
+      ShortcutBinding(action: .activity, key: "9", command: false, control: true))
     WorkspaceController(store: store).selectAdjacentProject(1)
     #expect(store.state.selectedProjectID == store.state.projects[0].id)
 
-    let shortcut = StateStore(fileURL: stateURL).shortcut(for: .missionControl)
+    let shortcut = StateStore(fileURL: stateURL).shortcut(for: .activity)
     #expect(shortcut.key == "9")
     #expect(shortcut.control)
     #expect(!shortcut.command)
