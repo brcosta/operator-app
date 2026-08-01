@@ -1,7 +1,14 @@
 import XCTest
 
 final class OperatorWorkflowUITests: OperatorUITestCase {
+  private func requireRealCLIIntegration(_ name: String) throws {
+    try XCTSkipUnless(
+      ProcessInfo.processInfo.environment["RUN_REAL_CLI_UI_TESTS"] == "1",
+      "Skipping \(name): real CLI integration is not configured for this environment")
+  }
+
   func testRealCodexSessionsKeepKeyboardFocusAfterTabSwitching() throws {
+    try requireRealCLIIntegration("Codex UI test")
     addProject(named: "Codex Focus Project")
 
     let initialCodex = button("operator.emptyWorkspace.startCodex")
@@ -55,6 +62,7 @@ final class OperatorWorkflowUITests: OperatorUITestCase {
   }
 
   func testRealClaudeSessionsKeepKeyboardFocusAfterTabSwitching() throws {
+    try requireRealCLIIntegration("Claude Code UI test")
     addProject(named: "Claude Focus Project")
 
     let initialClaude = button("operator.emptyWorkspace.startClaude")
