@@ -137,7 +137,7 @@ struct OperatorIntegrationTests {
 
       let layoutResponse = try! UnixSocketClient.send(
         request: OperatorOpenRequest(
-          version: 1, action: "layout", path: nil, layout: "mission-control",
+          version: 1, action: "layout", path: nil, layout: "split-right",
           sessionID: sessionID.uuidString, token: token),
         socketPath: socketPath)
       #expect(layoutResponse == "OK")
@@ -145,7 +145,7 @@ struct OperatorIntegrationTests {
       lock.lock()
       let receivedLayout = requestedLayout
       lock.unlock()
-      #expect(receivedLayout?.command == "mission-control")
+      #expect(receivedLayout?.command == "split-right")
       #expect(receivedLayout?.sessionID == sessionID)
 
       let questionResponse = try! UnixSocketClient.send(
@@ -247,51 +247,6 @@ struct OperatorIntegrationTests {
   }
 
   @MainActor
-  @Test func missionControlBuildsAndCollapsesNativeGridLayout() throws {
-    let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
-      UUID().uuidString)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
-    store.addProject(name: "Grid", directory: directory.path)
-    let project = try #require(store.state.projects.first)
-    let controller = WorkspaceController(store: store)
-    controller.launch(
-      LaunchRequest(
-        title: "Agent 0", command: "echo agent", directory: project.workspaces[0].directory,
-        projectID: project.id, workspaceID: project.workspaces[0].id))
-    for index in 1..<4 {
-      let workspace = project.workspaces[0]
-      controller.splitFocusedTerminal(.horizontal)
-      let paneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-      controller.launch(
-        LaunchRequest(
-          title: "Agent \(index)", command: "echo agent", directory: workspace.directory,
-          projectID: project.id, workspaceID: workspace.id), intoPane: paneID)
-    }
-
-    controller.missionControlLayout()
-    let layout = try #require(controller.terminalLayout)
-    guard
-      case .split(
-        .vertical, .split(.horizontal, let firstA, let firstB),
-        .split(.horizontal, let secondA, let secondB)) = layout
-    else {
-      Issue.record("Expected a 2×2 Mission Control grid")
-      return
-    }
-    let ids = [firstA, firstB, secondA, secondB].compactMap { node -> UUID? in
-      if case .terminal(let id) = node { id } else { nil }
-    }
-    #expect(Set(ids) == Set(controller.sessions.map(\.id)))
-
-    let closed = controller.sessions[3]
-    controller.close(closed)
-    #expect(!controller.terminalLayout!.contains(closed.id))
-    #expect(controller.terminalLayout != nil)
-  }
-
-  @MainActor
   @Test func configurableShortcutsPersistAndNavigateAcrossProjectsAndHarnessPanes() throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
       UUID().uuidString)
@@ -348,40 +303,4 @@ struct OperatorIntegrationTests {
         == ShortcutBinding.defaults.first(where: { $0.action == .nextPane }))
   }
 
-  @MainActor
-  @Test func missionControlKeepsEveryHarnessReachableBeyondFourPanes() throws {
-    let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
-      UUID().uuidString)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
-    store.addProject(name: "Fleet", directory: directory.path)
-    let project = try #require(store.state.projects.first)
-    let workspace = try #require(project.workspaces.first)
-    let controller = WorkspaceController(store: store)
-    controller.launch(
-      LaunchRequest(
-        title: "Agent 0", command: "echo agent", directory: workspace.directory,
-        projectID: project.id, workspaceID: workspace.id))
-    for index in 1..<5 {
-      controller.splitFocusedTerminal(.horizontal)
-      let paneID = try #require(controller.terminalLayout?.emptyPaneIDs.first)
-      controller.launch(
-        LaunchRequest(
-          title: "Agent \(index)", command: "echo agent", directory: workspace.directory,
-          projectID: project.id, workspaceID: workspace.id), intoPane: paneID)
-    }
-
-    controller.missionControlLayout()
-    let layout = try #require(controller.terminalLayout)
-    #expect(controller.sessions.allSatisfy { layout.contains($0.id) })
-
-    controller.applyLayout(command: "split-right")
-    let horizontal = try #require(controller.terminalLayout)
-    #expect(horizontal.emptyPaneIDs.count == 1)
-    controller.applyLayout(command: "split-bottom")
-    #expect(controller.terminalLayout?.emptyPaneIDs.count == 2)
-    controller.applyLayout(command: "unknown")
-    #expect(controller.alertMessage == "Unknown layout command: unknown.")
-  }
 }

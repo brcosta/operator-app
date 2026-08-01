@@ -10,6 +10,14 @@ import WebKit
 #endif
 
 struct PresentationAndIPCTests {
+  @Test func fileNavigatorToggleAlignsWithExpandedPanelCloseControl() {
+    let floatingCenter =
+      FileNavigatorChrome.floatingTopInset + FileNavigatorChrome.controlSize / 2
+    let panelCenter =
+      FileNavigatorChrome.headerInset + FileNavigatorChrome.headerContentHeight / 2
+    #expect(floatingCenter == panelCenter)
+  }
+
   @Test func nativeNotificationsRequireAnApplicationBundle() {
     #expect(!OperatorRuntimeEnvironment.supportsNativeNotifications(
       bundleURL: URL(fileURLWithPath: "/tmp/Operator")))
@@ -69,11 +77,17 @@ struct PresentationAndIPCTests {
     #expect(
       OperatorSettingsSection.allCases.map(\.title)
         == [
-          "General", "Terminal", "Terminal Colors", "Privacy & Integrations", "Shortcuts",
-          "Data & Diagnostics",
+          "General", "Terminal", "Terminal Colors", "Harness Launch", "Privacy & Integrations",
+          "Shortcuts", "Data & Diagnostics",
         ])
-    #expect(Set(OperatorSettingsSection.allCases.map(\.systemImage)).count == 6)
+    #expect(Set(OperatorSettingsSection.allCases.map(\.systemImage)).count == 7)
     #expect(OperatorSettingsSection.allCases.allSatisfy { !$0.subtitle.isEmpty })
+  }
+
+  @Test func harnessLaunchArgumentsAreBoundedAndAppliedOnlyToNewCommands() {
+    #expect(HarnessLaunchArguments.command("claude", arguments: " --model opus ") == "claude --model opus")
+    #expect(HarnessLaunchArguments.command("codex", arguments: "") == "codex")
+    #expect(HarnessLaunchArguments.normalized(String(repeating: "x", count: 2_000)).count == 1_024)
   }
 
   @Test func markdownValidationCanonicalizesReadableMarkdown() throws {

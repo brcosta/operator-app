@@ -214,7 +214,6 @@ enum OperatorHarnessSkill {
     Available commands:
     - `operator open <path.md>`: open a Markdown file inside the current workspace.
     - `operator layout split-right` or `operator layout split-bottom`: split the current pane.
-    - `operator layout mission-control`: arrange the current project's active terminal panes.
     - `operator question <message>`: ask the user a decision through Operator.
     - `operator artifact open <path> [kind]`: surface a generated artifact in Operator.
     - `operator help`: display this command reference in the terminal.

@@ -44,6 +44,16 @@ enum MarkdownViewerError: LocalizedError {
   }
 }
 
+/// Shared geometry keeps the collapsed navigator affordance in exactly the
+/// position occupied by the expanded navigator's close control.
+enum FileNavigatorChrome {
+  static let headerInset: CGFloat = 11
+  static let controlSize: CGFloat = 28
+  static let headerContentHeight: CGFloat = 40
+  static let floatingTopInset: CGFloat =
+    headerInset + (headerContentHeight - controlSize) / 2
+}
+
 @MainActor
 final class MarkdownDocument: ObservableObject, Identifiable {
   let path: String
@@ -742,6 +752,7 @@ struct ProjectFileNavigator: View {
               .foregroundStyle(.orange)
           }
         }
+        .frame(minHeight: FileNavigatorChrome.headerContentHeight, alignment: .leading)
         Spacer()
         Button {
           if let parentDirectory { navigate(to: parentDirectory) }
@@ -776,11 +787,16 @@ struct ProjectFileNavigator: View {
         .help("Refresh files")
         Button(action: close) {
           Image(systemName: "sidebar.trailing")
+            .frame(
+              width: FileNavigatorChrome.controlSize,
+              height: FileNavigatorChrome.controlSize
+            )
         }
         .buttonStyle(.borderless)
         .help("Hide file navigator")
+        .accessibilityIdentifier("operator.fileNavigator.close")
       }
-      .padding(11)
+      .padding(FileNavigatorChrome.headerInset)
 
       TextField("Filter files", text: $query)
         .textFieldStyle(.roundedBorder)
