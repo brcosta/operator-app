@@ -224,6 +224,8 @@ final class OperatorAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
           $0.symbol == "🚀"
         },
         "emojiNormalization": Project.normalizedEmoji("🚀") == "🚀",
+        "harnessBrandAssets": HarnessBrandAssets.image(for: .claudeCode) != nil
+          && HarnessBrandAssets.image(for: .codex) != nil,
         "appearanceDefault": store.state.appearance == .system,
         "notificationsDefaultOff": !store.state.notificationsEnabled,
       ]

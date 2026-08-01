@@ -5,6 +5,9 @@ All notable changes to Operator are documented here. Releases follow
 
 ## [Unreleased]
 
+- Fix packaged app bundles to include SwiftPM harness-brand resources, preventing
+  startup crashes in downloaded DMGs.
+
 ## [0.1.0] - 2026-07-19
 
 Initial public baseline: multi-project CLI harness sessions, managed resume,

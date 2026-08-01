@@ -25,20 +25,33 @@ fi
 
 cd "$root_dir"
 swift build -c release
+build_products=$(swift build -c release --show-bin-path)
+resource_bundle="$build_products/Operator_Operator.bundle"
+if [[ ! -d "$resource_bundle" ]]; then
+  print -u2 "Missing SwiftPM resource bundle at $resource_bundle"
+  exit 1
+fi
 mkdir -p "$root_dir/dist"
 staging=$(mktemp -d "$root_dir/dist/operator-package.XXXXXX")
 trap 'rm -rf "$staging"' EXIT
 staged_bundle="$staging/Operator.app"
 mkdir -p "$staged_bundle/Contents/MacOS" "$staged_bundle/Contents/Resources"
-cp .build/release/Operator "$staged_bundle/Contents/MacOS/Operator"
+cp "$build_products/Operator" "$staged_bundle/Contents/MacOS/Operator"
 cp Packaging/Info.plist "$staged_bundle/Contents/Info.plist"
 cp Packaging/Operator.icns "$staged_bundle/Contents/Resources/Operator.icns"
+cp -R "$resource_bundle" "$staged_bundle/Contents/Resources/Operator_Operator.bundle"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$staged_bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$staged_bundle/Contents/Info.plist"
 chmod 755 "$staged_bundle/Contents/MacOS/Operator"
 chmod 644 "$staged_bundle/Contents/Info.plist" "$staged_bundle/Contents/Resources/Operator.icns"
 /usr/bin/plutil -lint "$staged_bundle/Contents/Info.plist" >/dev/null
-cmp -s .build/release/Operator "$staged_bundle/Contents/MacOS/Operator"
+cmp -s "$build_products/Operator" "$staged_bundle/Contents/MacOS/Operator"
+for asset in claude-code.svg codex.svg; do
+  if [[ ! -r "$staged_bundle/Contents/Resources/Operator_Operator.bundle/$asset" ]]; then
+    print -u2 "Packaged app is missing required resource: $asset"
+    exit 1
+  fi
+done
 /usr/bin/codesign \
   --force \
   --sign - \

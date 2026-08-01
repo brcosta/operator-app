@@ -6,8 +6,9 @@ bundle="${1:-$root_dir/dist/Operator.app}"
 executable="$bundle/Contents/MacOS/Operator"
 plist="$bundle/Contents/Info.plist"
 icon="$bundle/Contents/Resources/Operator.icns"
+resource_bundle="$bundle/Contents/Resources/Operator_Operator.bundle"
 
-if [[ ! -x "$executable" || ! -r "$plist" || ! -r "$icon" ]]; then
+if [[ ! -x "$executable" || ! -r "$plist" || ! -r "$icon" || ! -r "$resource_bundle/claude-code.svg" || ! -r "$resource_bundle/codex.svg" ]]; then
   print -u2 "Incomplete Operator bundle: $bundle"
   exit 1
 fi
