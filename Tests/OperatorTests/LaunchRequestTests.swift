@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -44,12 +45,23 @@ struct LaunchRequestTests {
         "PATH": "/custom/bin",
       ],
       sessionID: sessionID,
-      token: "session-token")
+      token: "session-token",
+      colorForegroundBackground: TerminalColorEnvironment.darkForegroundBackground)
 
     #expect(environment["OPERATOR_SESSION_ID"] == sessionID.uuidString)
     #expect(environment["OPERATOR_SOCKET"] == "/private/tmp/operator.sock")
     #expect(environment["OPERATOR_TOKEN"] == "session-token")
     #expect(environment["PATH"] == "/trusted/operator/bin:/custom/bin")
+    #expect(environment["COLORFGBG"] == "15;default;0")
+  }
+
+  @Test @MainActor func terminalColorHintTracksTheVisibleAppearance() {
+    #expect(
+      TerminalColorEnvironment.foregroundBackground(for: NSAppearance(named: .darkAqua)!)
+        == TerminalColorEnvironment.darkForegroundBackground)
+    #expect(
+      TerminalColorEnvironment.foregroundBackground(for: NSAppearance(named: .aqua)!)
+        == TerminalColorEnvironment.lightForegroundBackground)
   }
 
   @Test func launchRequestRejectsEmptyCommand() {

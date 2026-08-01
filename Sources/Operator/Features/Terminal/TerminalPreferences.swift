@@ -116,25 +116,3 @@ enum TerminalFontResolver {
     return NSFont(descriptor: descriptor, size: size) ?? base
   }
 }
-
-struct TerminalFocusIntent: Equatable {
-  private(set) var isPending = false
-
-  mutating func request() {
-    isPending = true
-  }
-
-  mutating func recordDelivery(succeeded: Bool) {
-    if succeeded { isPending = false }
-  }
-}
-
-enum TerminalKeyboardFallbackPolicy {
-  static func shouldForward(
-    isOwner: Bool, isKeyWindow: Bool, hasAttachedSheet: Bool,
-    firstResponderIsTextInput: Bool, usesCommandModifier: Bool
-  ) -> Bool {
-    isOwner && isKeyWindow && !hasAttachedSheet && !firstResponderIsTextInput
-      && !usesCommandModifier
-  }
-}

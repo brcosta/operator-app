@@ -158,55 +158,6 @@ struct TerminalPreferencesTests {
     #expect(rgbHex(of: terminal.caretColor) == 0x0969DA)
   }
 
-  @Test func focusIntentSurvivesMountingUntilFirstResponderDeliverySucceeds() {
-    var intent = TerminalFocusIntent()
-
-    intent.request()
-    #expect(intent.isPending)
-    intent.recordDelivery(succeeded: false)
-    #expect(intent.isPending)
-    intent.recordDelivery(succeeded: true)
-    #expect(!intent.isPending)
-  }
-
-  @Test func selectedTerminalFallbackOwnsPlainInputWithoutHijackingFieldsOrCommands() {
-    #expect(
-      TerminalKeyboardFallbackPolicy.shouldForward(
-        isOwner: true, isKeyWindow: true, hasAttachedSheet: false,
-        firstResponderIsTextInput: false, usesCommandModifier: false))
-    #expect(
-      !TerminalKeyboardFallbackPolicy.shouldForward(
-        isOwner: false, isKeyWindow: true, hasAttachedSheet: false,
-        firstResponderIsTextInput: false, usesCommandModifier: false))
-    #expect(
-      !TerminalKeyboardFallbackPolicy.shouldForward(
-        isOwner: true, isKeyWindow: true, hasAttachedSheet: false,
-        firstResponderIsTextInput: true, usesCommandModifier: false))
-    #expect(
-      !TerminalKeyboardFallbackPolicy.shouldForward(
-        isOwner: true, isKeyWindow: true, hasAttachedSheet: false,
-        firstResponderIsTextInput: false, usesCommandModifier: true))
-    #expect(
-      !TerminalKeyboardFallbackPolicy.shouldForward(
-        isOwner: true, isKeyWindow: true, hasAttachedSheet: true,
-        firstResponderIsTextInput: false, usesCommandModifier: false))
-  }
-
-  @MainActor
-  @Test func launchingATerminalQueuesFocusBeforeItsNativeViewMounts() throws {
-    let directory = try TestSupport.temporaryDirectory()
-    defer { TestSupport.remove(directory) }
-    let store = StateStore(fileURL: directory.appendingPathComponent("state.json"))
-    let controller = WorkspaceController(store: store)
-
-    controller.launch(
-      LaunchRequest(title: "Focused shell", command: "fish", directory: directory.path))
-
-    let session = try #require(controller.sessions.first)
-    #expect(controller.selectedSessionID == session.id)
-    #expect(session.keyboardFocusIntent.isPending)
-  }
-
   @MainActor
   @Test func staleOutgoingTabCannotDetachTerminalFromIncomingTab() {
     let terminal = OperatorTerminalView(frame: .zero)
@@ -243,23 +194,6 @@ struct TerminalPreferencesTests {
 
     cached.mount(terminal)
     #expect(terminal.superview === cached)
-  }
-
-  @MainActor
-  @Test func fallbackFocusMakesTerminalTheActualFirstResponderForEnhancedInput() throws {
-    let window = NSWindow(
-      contentRect: .init(x: 0, y: 0, width: 640, height: 480),
-      styleMask: [.titled], backing: .buffered, defer: false)
-    let terminal = OperatorTerminalView(frame: window.contentView?.bounds ?? .zero)
-    window.contentView?.addSubview(terminal)
-    let competingControl = NSButton(title: "Tab", target: nil, action: nil)
-    window.contentView?.addSubview(competingControl)
-    window.makeKeyAndOrderFront(nil)
-    #expect(window.makeFirstResponder(competingControl))
-    #expect(window.firstResponder === competingControl)
-
-    #expect(terminal.takeKeyboardFocus())
-    #expect(window.firstResponder === terminal)
   }
 
   @MainActor
