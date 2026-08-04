@@ -3,20 +3,39 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-  case newSession, closePane, splitPane, changes, activity, taskBrief,
-    newProject, previousPane, nextPane, previousProject, nextProject
+  case newSession, closePane, splitPaneHorizontal, splitPaneVertical, changes, activity, taskBrief,
+    newProject, previousPane, nextPane, previousPaneOrTab, nextPaneOrTab, previousProject,
+    nextProject
   var id: String { rawValue }
+
+  init(from decoder: Decoder) throws {
+    let value = try decoder.singleValueContainer().decode(String.self)
+    // The original release stored one generic split action. Preserve those user preferences as
+    // the horizontal split binding while giving vertical splits their own explicit shortcut.
+    if value == "splitPane" {
+      self = .splitPaneHorizontal
+    } else if let action = ShortcutAction(rawValue: value) {
+      self = action
+    } else {
+      throw DecodingError.dataCorruptedError(
+        in: try decoder.singleValueContainer(), debugDescription: "Unknown shortcut action: \(value)")
+    }
+  }
+
   var title: String {
     switch self {
     case .newSession: "New Session"
     case .closePane: "Close Pane"
-    case .splitPane: "Split Pane"
+    case .splitPaneHorizontal: "Split Pane Horizontally"
+    case .splitPaneVertical: "Split Pane Vertically"
     case .changes: "Open Changes"
     case .activity: "Activity"
     case .taskBrief: "Task Brief"
     case .newProject: "New Project"
     case .previousPane: "Previous Pane"
     case .nextPane: "Next Pane"
+    case .previousPaneOrTab: "Previous Pane or Tab"
+    case .nextPaneOrTab: "Next Pane or Tab"
     case .previousProject: "Previous Project"
     case .nextProject: "Next Project"
     }
@@ -44,6 +63,15 @@ struct ShortcutBinding: Codable, Hashable, Identifiable {
 
   var keyDisplayName: String { ShortcutKey.displayName(for: key) }
 
+  var shortcutDisplayName: String {
+    var symbols = ""
+    if command { symbols += "⌘" }
+    if shift { symbols += "⇧" }
+    if option { symbols += "⌥" }
+    if control { symbols += "⌃" }
+    return symbols + keyDisplayName
+  }
+
   var modifiers: EventModifiers {
     var result: EventModifiers = []
     if command { result.insert(.command) }
@@ -55,13 +83,16 @@ struct ShortcutBinding: Codable, Hashable, Identifiable {
 
   static let defaults: [ShortcutBinding] = [
     .init(action: .newSession, key: "k"), .init(action: .closePane, key: "w"),
-    .init(action: .splitPane, key: "\\"),
+    .init(action: .splitPaneHorizontal, key: "\\"),
+    .init(action: .splitPaneVertical, key: "\\", shift: true),
     .init(action: .changes, key: "g", shift: true),
     .init(action: .activity, key: "a", shift: true),
     .init(action: .taskBrief, key: "b", shift: true),
     .init(action: .newProject, key: "n", shift: true),
     .init(action: .previousPane, key: ",", option: true),
     .init(action: .nextPane, key: ".", option: true),
+    .init(action: .previousPaneOrTab, key: ShortcutKey.leftArrow, option: true),
+    .init(action: .nextPaneOrTab, key: ShortcutKey.rightArrow, option: true),
     .init(action: .previousProject, key: "[", option: true),
     .init(action: .nextProject, key: "]", option: true),
   ]

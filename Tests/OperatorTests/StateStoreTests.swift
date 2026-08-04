@@ -159,6 +159,21 @@ struct StateStoreTests {
     #expect(!shortcut.command)
   }
 
+  @Test func splitShortcutsAreDistinctAndMigrateTheLegacyBinding() throws {
+    let horizontal = try #require(
+      ShortcutBinding.defaults.first { $0.action == .splitPaneHorizontal })
+    let vertical = try #require(
+      ShortcutBinding.defaults.first { $0.action == .splitPaneVertical })
+    #expect(horizontal.key == vertical.key)
+    #expect(horizontal.command && !horizontal.shift)
+    #expect(vertical.command && vertical.shift)
+
+    let legacy = Data(
+      #"{"action":"splitPane","key":"\\","command":true,"shift":false,"option":false,"control":false}"#.utf8)
+    let migrated = try JSONDecoder().decode(ShortcutBinding.self, from: legacy)
+    #expect(migrated.action == .splitPaneHorizontal)
+  }
+
   @Test func stateStorePersistsProjectsAndSessionMetadata() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }

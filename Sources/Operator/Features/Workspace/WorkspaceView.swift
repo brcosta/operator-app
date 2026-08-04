@@ -171,6 +171,24 @@ struct WorkspaceView: View {
           .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
               if selectedProject != nil {
+                // Keep these bindings global to the workspace, including Markdown/file tabs that
+                // do not render the terminal navigation buttons below.
+                Button {
+                  controller.focusAdjacentPaneOrTab(-1)
+                } label: {
+                  EmptyView()
+                }
+                .operatorShortcut(controller.store.shortcut(for: .previousPaneOrTab))
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+                Button {
+                  controller.focusAdjacentPaneOrTab(1)
+                } label: {
+                  EmptyView()
+                }
+                .operatorShortcut(controller.store.shortcut(for: .nextPaneOrTab))
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
                 Button {
                   paletteVisible = true
                 } label: {
@@ -227,14 +245,25 @@ struct WorkspaceView: View {
                 }
               }
               if controller.canSplitFocusedPane {
+                let horizontalShortcut = controller.store.shortcut(for: .splitPaneHorizontal)
+                let verticalShortcut = controller.store.shortcut(for: .splitPaneVertical)
                 Menu {
-                  Button("Split Horizontally") { controller.splitFocusedTerminal(.horizontal) }
-                  Button("Split Vertically") { controller.splitFocusedTerminal(.vertical) }
+                  Button {
+                    controller.splitFocusedTerminal(.horizontal)
+                  } label: {
+                    shortcutMenuLabel("Split Horizontally", horizontalShortcut)
+                  }
+                  .operatorShortcut(horizontalShortcut)
+                  Button {
+                    controller.splitFocusedTerminal(.vertical)
+                  } label: {
+                    shortcutMenuLabel("Split Vertically", verticalShortcut)
+                  }
+                  .operatorShortcut(verticalShortcut)
                 } label: {
                   Label("Split", systemImage: "rectangle.split.2x1")
                 }
-                .operatorShortcut(controller.store.shortcut(for: .splitPane))
-                .help("Split the focused pane")
+                .help("Split the focused pane horizontally or vertically")
               }
               Button {
                 shortcutsVisible = true
@@ -440,6 +469,8 @@ struct WorkspaceView: View {
             .help(
               HarnessInstallation.isInstalled(.codex)
                 ? "Start Codex" : HarnessInstallation.unavailableHelp(for: .codex))
+          Button("New Terminal") { controller.launchShell() }
+            .help("Open a new terminal in the current project's workspace")
           Divider()
           Button("Custom Command…") { paletteVisible = true }
           if !recentCustomCommands.isEmpty {
@@ -634,6 +665,16 @@ struct WorkspaceView: View {
     case .file: "doc.text"
     case .mixed: "rectangle.split.2x1"
     case .empty: "rectangle.dashed"
+    }
+  }
+
+  private func shortcutMenuLabel(_ title: String, _ shortcut: ShortcutBinding) -> some View {
+    HStack {
+      Text(title)
+      Spacer(minLength: 28)
+      Text(shortcut.shortcutDisplayName)
+        .foregroundStyle(.secondary)
+        .monospaced()
     }
   }
 
@@ -939,6 +980,7 @@ private struct PaneStatusBar: View {
   @ObservedObject var controller: WorkspaceController
   @ObservedObject var session: TerminalSession
   let close: () -> Void
+  let openFile: (String) -> Void
   @State private var answerTarget: HarnessQuestion?
 
   var body: some View {
@@ -987,7 +1029,7 @@ private struct PaneStatusBar: View {
         Label(branch, systemImage: "arrow.triangle.branch")
           .foregroundStyle(.secondary).lineLimit(1)
       }
-      SessionRadarButton(files: session.changedFiles)
+      SessionRadarButton(files: session.changedFiles, openFile: openFile)
       Spacer()
       if let question {
         Button {
@@ -1185,13 +1227,15 @@ private struct TerminalPaneView: View {
     Group {
       if controller.store.state.paneStatusBarPosition ?? .top == .top {
         VStack(spacing: 0) {
-          PaneStatusBar(controller: controller, session: session, close: close)
+          PaneStatusBar(
+            controller: controller, session: session, close: close, openFile: controller.openFile)
           terminalSurface
         }
       } else {
         VStack(spacing: 0) {
           terminalSurface
-          PaneStatusBar(controller: controller, session: session, close: close)
+          PaneStatusBar(
+            controller: controller, session: session, close: close, openFile: controller.openFile)
         }
       }
     }

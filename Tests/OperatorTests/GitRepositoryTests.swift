@@ -45,6 +45,39 @@ struct GitRepositoryTests {
     #expect(first.fingerprint != second.fingerprint)
   }
 
+  @Test func pendingDiffSelectsWorkingTreeStagedAndUntrackedContent() throws {
+    let directory = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(directory) }
+    try TestSupport.initializeGitRepository(at: directory)
+    let tracked = directory.appendingPathComponent("notes.txt")
+    try "base\n".write(to: tracked, atomically: true, encoding: .utf8)
+    try TestSupport.runGit(["add", "notes.txt"], in: directory)
+    try TestSupport.runGit(["commit", "-m", "Base"], in: directory)
+
+    try "working tree\n".write(to: tracked, atomically: true, encoding: .utf8)
+    let unstaged = try #require(try GitRepository.diff(for: tracked.path))
+    #expect(unstaged.contains("-base"))
+    #expect(unstaged.contains("+working tree"))
+
+    try "staged\n".write(to: tracked, atomically: true, encoding: .utf8)
+    try TestSupport.runGit(["add", "notes.txt"], in: directory)
+    try "final working tree\n".write(to: tracked, atomically: true, encoding: .utf8)
+    let combined = try #require(try GitRepository.diff(for: tracked.path))
+    #expect(combined.contains("-base"))
+    #expect(combined.contains("+final working tree"))
+    #expect(!combined.contains("+staged"))
+
+    let untracked = directory.appendingPathComponent("scratch.txt")
+    try "new file\n".write(to: untracked, atomically: true, encoding: .utf8)
+    let untrackedDiff = try #require(try GitRepository.diff(for: untracked.path))
+    #expect(untrackedDiff.contains("+new file"))
+
+    try TestSupport.runGit(["add", "."], in: directory)
+    try TestSupport.runGit(["commit", "-m", "Add scratch"], in: directory)
+    #expect(try GitRepository.diff(for: tracked.path) == nil)
+    #expect(try GitRepository.diff(for: untracked.path) == nil)
+  }
+
   @Test func gitWorktreesHaveIndependentRootsAndStatus() throws {
     let directory = try TestSupport.temporaryDirectory()
     let worktree = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(

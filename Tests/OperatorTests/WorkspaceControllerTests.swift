@@ -33,6 +33,49 @@ struct WorkspaceControllerTests {
     #expect(!store.state.notificationsEnabled)
   }
 
+  @Test func paneTabNavigationCrossesBoundariesInDisplayOrder() throws {
+    let root = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(root) }
+    let store = StateStore(fileURL: root.appendingPathComponent("state.json"))
+    let projectID = store.addProject(name: "Navigation", directory: root.path)
+    let firstPath = root.appendingPathComponent("first.md").path
+    let secondPath = root.appendingPathComponent("second.md").path
+    let thirdPath = root.appendingPathComponent("third.md").path
+    let firstPane = UUID()
+    let secondPane = UUID()
+    let thirdPane = UUID()
+    let firstTab = UUID()
+    let secondTab = UUID()
+    let tabs = [
+      WorkspaceTab(
+        id: firstTab, title: "First", layout: .split(
+          .horizontal,
+          .markdown(firstPane, path: firstPath, workspaceDirectory: root.path),
+          .markdown(secondPane, path: secondPath, workspaceDirectory: root.path)),
+        focusedSessionID: nil, focusedPaneID: firstPane),
+      WorkspaceTab(
+        id: secondTab, title: "Second",
+        layout: .markdown(thirdPane, path: thirdPath, workspaceDirectory: root.path),
+        focusedSessionID: nil, focusedPaneID: thirdPane),
+    ]
+    store.saveTabs(tabs, selectedTabID: firstTab, for: projectID)
+    let controller = WorkspaceController(store: store)
+
+    controller.focusAdjacentPaneOrTab(1)
+    #expect(controller.selectedPaneID == secondPane)
+    controller.focusAdjacentPaneOrTab(1)
+    #expect(controller.selectedTabID == secondTab)
+    #expect(controller.selectedPaneID == thirdPane)
+    controller.focusAdjacentPaneOrTab(-1)
+    #expect(controller.selectedTabID == firstTab)
+    #expect(controller.selectedPaneID == secondPane)
+    controller.focusAdjacentPaneOrTab(-1)
+    #expect(controller.selectedPaneID == firstPane)
+    controller.focusAdjacentPaneOrTab(-1)
+    #expect(controller.selectedTabID == firstTab)
+    #expect(controller.selectedPaneID == firstPane)
+  }
+
   @Test func harnessTaskFinishedEventEmitsRoutableNotification() throws {
     let directory = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(directory) }

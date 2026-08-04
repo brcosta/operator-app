@@ -199,6 +199,20 @@ struct PresentationAndIPCTests {
     #expect(html.contains("background: #161b22"))
   }
 
+  @Test func secureHTMLRendererExplainsBlockedInteractiveDocuments() {
+    let interactive = "<html><body><canvas id=\"game\"></canvas><script>draw()</script></body></html>"
+    let staticHTML = "<html><body><h1>Release notes</h1></body></html>"
+
+    #expect(SecureHTMLRenderer.containsInteractiveContent(interactive))
+    #expect(!SecureHTMLRenderer.containsInteractiveContent(staticHTML))
+    #expect(
+      SecureHTMLRenderer.documentHTML(for: interactive, colorScheme: .dark)
+        .contains("Interactive content is disabled in secure preview"))
+    #expect(
+      !SecureHTMLRenderer.documentHTML(for: staticHTML, colorScheme: .dark)
+        .contains("Interactive content is disabled in secure preview"))
+  }
+
   @Test func secureHTMLNavigationNeverRendersExternalOrArbitraryLocalDocuments() {
     #expect(
       SecureHTMLNavigationPolicy.allowsInternalDocumentLoad(
@@ -280,6 +294,74 @@ struct PresentationAndIPCTests {
     #expect(ProjectFileTreeLoader.filtering(nodes, query: "missing").isEmpty)
   }
 
+  @Test func projectFileTreeLoadsDirectoryLevelsOnDemand() throws {
+    let root = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(root) }
+    let sources = root.appendingPathComponent("Sources", isDirectory: true)
+    try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+    try "struct App {}".write(
+      to: sources.appendingPathComponent("App.swift"), atomically: true, encoding: .utf8)
+
+    let rootNodes = try ProjectFileTreeLoader.loadLevel(root: root.path)
+    #expect(rootNodes.map(\.name) == ["Sources"])
+    #expect(rootNodes[0].children == nil)
+    #expect(!rootNodes[0].childrenLoaded)
+
+    let sourceNodes = try ProjectFileTreeLoader.loadLevel(root: sources.path, depth: 1)
+    #expect(sourceNodes.map(\.name) == ["App.swift"])
+    #expect(sourceNodes[0].childrenLoaded)
+  }
+
+  @Test func gitFileIndexDecoratesFilesAndChangedDirectoriesWithoutScanningRows() {
+    let changes = [
+      GitChangedFile(path: "Sources/App.swift", originalPath: nil, status: "M", section: .unstaged),
+      GitChangedFile(path: "README.md", originalPath: nil, status: "??", section: .untracked),
+    ]
+    let index = ProjectFileGitIndex(changes: changes)
+    let root = "/tmp/operator-index"
+    let file = ProjectFileNode(
+      path: root + "/Sources/App.swift", name: "App.swift", isDirectory: false)
+    let directory = ProjectFileNode(
+      path: root + "/Sources", name: "Sources", isDirectory: true, childrenLoaded: false)
+    let untracked = ProjectFileNode(
+      path: root + "/README.md", name: "README.md", isDirectory: false)
+    #expect(index.decoration(for: file, root: root)?.label == "M")
+    #expect(index.decoration(for: directory, root: root)?.label == "•")
+    #expect(index.decoration(for: untracked, root: root)?.label == "U")
+  }
+
+  @Test @MainActor func markdownPreviewRejectsOversizedFilesBeforeReadingContents() async throws {
+    let root = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(root) }
+    let path = root.appendingPathComponent("large.md")
+    let bytes = Data(repeating: 0x61, count: Int(FilePreviewLimits.maximumTextBytes + 1))
+    try bytes.write(to: path)
+    let document = MarkdownDocument(path: path.path, watchForChanges: false)
+    for _ in 0..<20 where document.errorMessage == nil {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(document.errorMessage?.contains("too large") == true)
+  }
+
+  @Test @MainActor func markdownDocumentLoadsPendingGitDiffAlongsideContent() async throws {
+    let root = try TestSupport.temporaryDirectory()
+    defer { TestSupport.remove(root) }
+    try TestSupport.initializeGitRepository(at: root)
+    let path = root.appendingPathComponent("notes.md")
+    try "# Before\n".write(to: path, atomically: true, encoding: .utf8)
+    try TestSupport.runGit(["add", "notes.md"], in: root)
+    try TestSupport.runGit(["commit", "-m", "Base"], in: root)
+    try "# After\n".write(to: path, atomically: true, encoding: .utf8)
+
+    let document = MarkdownDocument(path: path.path, allowedDirectory: root.path, watchForChanges: false)
+    for _ in 0..<30 where document.diffContent == nil {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(document.content.contains("# After"))
+    #expect(document.diffContent?.contains("-# Before") == true)
+    #expect(document.diffContent?.contains("+# After") == true)
+  }
+
   @Test func fileNavigatorParentNavigationUsesCanonicalReadableDirectories() throws {
     let root = try TestSupport.temporaryDirectory()
     defer { TestSupport.remove(root) }
@@ -328,6 +410,20 @@ struct PresentationAndIPCTests {
     #expect(stringColor != nil)
     #expect(commentColor != nil)
     #expect(String(highlighted.string) == source)
+  }
+
+  @Test func diffHighlighterPreservesPatchLinesAndMarksChanges() {
+    let source = "@@ -1,2 +1,2 @@\n-old value\n+new value\n context"
+    let highlighted = NSAttributedString(
+      DiffSyntaxHighlighter.highlight(source, colorScheme: .dark))
+    let deletionRange = (highlighted.string as NSString).range(of: "-old value")
+    let additionRange = (highlighted.string as NSString).range(of: "+new value")
+    let hunkRange = (highlighted.string as NSString).range(of: "@@")
+
+    #expect(highlighted.string == source + "\n")
+    #expect(highlighted.attribute(.foregroundColor, at: deletionRange.location, effectiveRange: nil) != nil)
+    #expect(highlighted.attribute(.backgroundColor, at: additionRange.location, effectiveRange: nil) != nil)
+    #expect(highlighted.attribute(.foregroundColor, at: hunkRange.location, effectiveRange: nil) != nil)
   }
 
   @Test func sourceEditorLineNumbersIncludeBlankAndTrailingLines() {

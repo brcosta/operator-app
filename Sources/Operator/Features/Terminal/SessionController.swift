@@ -1854,6 +1854,42 @@ final class WorkspaceController: ObservableObject {
     selectTerminal(paneIDs[next])
   }
 
+  /// Moves through the visible panes in a tab, crossing to the adjacent tab only at a boundary.
+  /// The order is deterministic for mixed terminal, Markdown, file, and empty panes.
+  func focusAdjacentPaneOrTab(_ offset: Int) {
+    guard offset != 0, let tabIndex = tabs.firstIndex(where: { $0.id == selectedTabID }) else {
+      return
+    }
+    func orderedPaneIDs(for tab: WorkspaceTab) -> [UUID] {
+      tab.layout.panesInDisplayOrder.compactMap { pane in
+        switch pane {
+        case .terminal(let id), .markdown(let id, _, _), .file(let id, _, _), .empty(let id): id
+        case .split: nil
+        }
+      }
+    }
+    let paneIDs = orderedPaneIDs(for: tabs[tabIndex])
+    guard !paneIDs.isEmpty else { return }
+    let currentIndex = selectedPaneID.flatMap { paneIDs.firstIndex(of: $0) } ?? 0
+    let nextIndex = currentIndex + (offset > 0 ? 1 : -1)
+    if paneIDs.indices.contains(nextIndex) {
+      selectContentPane(paneIDs[nextIndex])
+      return
+    }
+
+    let adjacentTabIndex = tabIndex + (offset > 0 ? 1 : -1)
+    guard tabs.indices.contains(adjacentTabIndex) else { return }
+    let adjacentTab = tabs[adjacentTabIndex]
+    let adjacentPaneIDs = orderedPaneIDs(for: adjacentTab)
+    guard let paneID = offset > 0 ? adjacentPaneIDs.first : adjacentPaneIDs.last else { return }
+    selectTab(adjacentTab.id)
+    selectContentPane(paneID)
+    OperatorDebugLog.record(
+      "navigation.pane-tab",
+      "direction=\(offset > 0 ? "next" : "previous") tab=\(shortID(adjacentTab.id)) pane=\(shortID(paneID))"
+    )
+  }
+
   func selectAdjacentProject(_ offset: Int) {
     let projects = store.state.projects
     guard !projects.isEmpty else { return }
