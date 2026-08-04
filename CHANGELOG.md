@@ -5,6 +5,15 @@ All notable changes to Operator are documented here. Releases follow
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-04
+
+- Add bounded, asynchronous file and Markdown previews with secure HTML rendering.
+- Add pending Git diff views with Diff/Raw/Rendered/Source presentation modes.
+- Add clickable changed-file entries that open the first-class file viewer.
+- Add distinct horizontal and vertical split shortcuts and keyboard navigation across panes and tabs.
+- Add a New Terminal action to the session menu and improve pane/tab navigation coverage.
+- Improve file-viewer and workspace resilience for large files and interactive HTML content.
+
 ## [0.2.0] - 2026-08-01
 
 - Add a focused Harness Launch settings page for optional arguments applied to new
@@ -23,6 +32,7 @@ Initial public baseline: multi-project CLI harness sessions, managed resume,
 terminal split grids, activity and task supervision, local Git inspection,
 Markdown and diff viewers, native notifications, and configurable shortcuts.
 
-[Unreleased]: https://github.com/brcosta/operator-app/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/brcosta/operator-app/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/brcosta/operator-app/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/brcosta/operator-app/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/brcosta/operator-app/releases/tag/v0.1.0

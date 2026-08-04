@@ -115,6 +115,55 @@ enum GitRepository {
         changes: changes, staged: staged, unstaged: unstaged, untrackedMetadata: untrackedMetadata))
   }
 
+  /// Returns the patch that represents a file's pending commit state.
+  ///
+  /// A file with both staged and unstaged edits is compared with `HEAD`, so the
+  /// viewer shows everything that would be committed. Untracked files are
+  /// compared against `/dev/null`.
+  static func diff(for rawPath: String) throws -> String? {
+    let root = try repositoryRoot(containing: rawPath)
+    let safePath = try WorkspacePathPolicy.canonicalContainedPath(rawPath, within: root)
+    let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+    let relativePath = String(
+      safePath.dropFirst(rootURL.path.hasSuffix("/") ? root.count : root.count + 1))
+    guard !relativePath.isEmpty else { return nil }
+
+    let changes = try status(in: root).filter { $0.path == relativePath }
+    guard !changes.isEmpty else { return nil }
+    let hasUntracked = changes.contains { $0.section == .untracked }
+    let hasStaged = changes.contains { $0.section == .staged }
+    let hasUnstaged = changes.contains { $0.section == .unstaged }
+
+    let arguments: [String]
+    let allowedExitCodes: Set<Int32>
+    if hasUntracked {
+      arguments = [
+        "diff", "--no-index", "--no-ext-diff", "--no-color", "--", "/dev/null", relativePath,
+      ]
+      // `git diff --no-index` returns 1 when differences are found.
+      allowedExitCodes = [0, 1]
+    } else if hasStaged && hasUnstaged {
+      arguments = [
+        "diff", "HEAD", "--no-ext-diff", "--no-color", "--no-renames", "--", relativePath,
+      ]
+      allowedExitCodes = [0]
+    } else if hasStaged {
+      arguments = [
+        "diff", "--cached", "--no-ext-diff", "--no-color", "--no-renames", "--", relativePath,
+      ]
+      allowedExitCodes = [0]
+    } else {
+      arguments = [
+        "diff", "--no-ext-diff", "--no-color", "--no-renames", "--", relativePath,
+      ]
+      allowedExitCodes = [0]
+    }
+
+    let result = try runResult(
+      directory: root, arguments: arguments, allowedExitCodes: allowedExitCodes)
+    return result.standardOutput.isEmpty ? nil : result.standardOutput
+  }
+
   static func branch(containing path: String) -> String? {
     guard isRepository(containing: path), let root = try? repositoryRoot(containing: path) else {
       return nil
@@ -222,6 +271,12 @@ enum GitRepository {
   }
 
   private static func run(directory: String, arguments: [String]) throws -> String {
+    try runResult(directory: directory, arguments: arguments).standardOutput
+  }
+
+  private static func runResult(
+    directory: String, arguments: [String], allowedExitCodes: Set<Int32> = [0]
+  ) throws -> BoundedProcessResult {
     guard FileManager.default.isExecutableFile(atPath: executable) else {
       throw GitRepositoryError.commandFailed("Git is unavailable at \(executable).")
     }
@@ -237,7 +292,7 @@ enum GitRepository {
         "GIT_OPTIONAL_LOCKS": "0", "GIT_PAGER": "/usr/bin/cat", "GIT_TERMINAL_PROMPT": "0",
         "LC_ALL": "C",
       ], timeout: 15, outputLimit: 4 * 1_048_576)
-    guard !result.timedOut, result.exitCode == 0 else {
+    guard !result.timedOut, let exitCode = result.exitCode, allowedExitCodes.contains(exitCode) else {
       let error =
         (result.timedOut ? "Git inspection timed out." : result.standardError)
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -248,6 +303,6 @@ enum GitRepository {
       throw GitRepositoryError.commandFailed(
         "Git inspection produced more than 4 MB of output. Narrow the repository status first.")
     }
-    return result.standardOutput
+    return result
   }
 }

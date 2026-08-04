@@ -7,6 +7,23 @@ import WebKit
 import cmark_gfm
 import cmark_gfm_extensions
 
+enum FilePreviewLimits {
+  /// Keep previews bounded so parsing and syntax highlighting cannot monopolize the UI process.
+  static let maximumTextBytes: UInt64 = 5 * 1024 * 1024
+  // 256 KiB is large enough for normal source files while keeping attributed-text layout and
+  // WebKit Markdown rendering comfortably below the point where AppKit can stall.
+  static let maximumRenderableBytes: UInt64 = 256 * 1024
+
+  static func boundedPreview(_ text: String) -> (content: String, isTruncated: Bool) {
+    guard let data = text.data(using: .utf8), data.count > maximumRenderableBytes else {
+      return (text, false)
+    }
+    let prefix = Data(data.prefix(Int(maximumRenderableBytes)))
+    let content = String(data: prefix, encoding: .utf8) ?? String(text.prefix(256_000))
+    return (content, true)
+  }
+}
+
 enum MarkdownFile {
   static let supportedExtensions: Set<String> = ["md", "markdown", "mdx"]
 
@@ -54,16 +71,52 @@ enum FileNavigatorChrome {
     headerInset + (headerContentHeight - controlSize) / 2
 }
 
+private struct FastTooltipModifier: ViewModifier {
+  let message: String
+  @State private var isHovered = false
+
+  func body(content: Content) -> some View {
+    content
+      .onHover { isHovered = $0 }
+      .overlay(alignment: .bottom) {
+        if isHovered {
+          Text(message)
+            .font(.caption2)
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+            .overlay {
+              RoundedRectangle(cornerRadius: 5).strokeBorder(.separator)
+            }
+            .fixedSize()
+            .offset(y: 30)
+            .allowsHitTesting(false)
+            .zIndex(100)
+        }
+      }
+  }
+}
+
+private extension View {
+  func fastTooltip(_ message: String) -> some View {
+    modifier(FastTooltipModifier(message: message))
+  }
+}
+
 @MainActor
 final class MarkdownDocument: ObservableObject, Identifiable {
   let path: String
   let id: String
   private let allowedDirectory: String?
   @Published private(set) var content = ""
+  @Published private(set) var diffContent: String?
   @Published private(set) var modifiedAt: Date?
   @Published private(set) var errorMessage: String?
   @Published private(set) var revision = 0
   private var timer: DispatchSourceTimer?
+  private var loadTask: Task<Void, Never>?
+  private var diffTask: Task<Void, Never>?
 
   init(path: String, allowedDirectory: String? = nil, watchForChanges: Bool = true) {
     self.path = path
@@ -102,28 +155,80 @@ final class MarkdownDocument: ObservableObject, Identifiable {
     timer.resume()
   }
 
-  deinit { timer?.cancel() }
+  deinit {
+    timer?.cancel()
+    loadTask?.cancel()
+    diffTask?.cancel()
+  }
 
   var title: String { URL(fileURLWithPath: path).lastPathComponent }
   var directoryURL: URL { URL(fileURLWithPath: path).deletingLastPathComponent() }
 
   func reload() {
-    do {
-      let validPath = try MarkdownFile.validate(path, withinDirectory: allowedDirectory)
-      guard let text = try String(contentsOfFile: validPath, encoding: .utf8) as String? else {
-        throw MarkdownViewerError.invalidText
+    loadTask?.cancel()
+    diffTask?.cancel()
+    diffContent = nil
+    let path = path
+    let allowedDirectory = allowedDirectory
+    loadTask = Task { @MainActor [weak self] in
+      let result = await Task.detached(priority: .utility) {
+        Result { () throws -> MarkdownLoadPayload in
+          let validPath = try MarkdownFile.validate(path, withinDirectory: allowedDirectory)
+          let attributes = try FileManager.default.attributesOfItem(atPath: validPath)
+          let byteCount = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+          guard byteCount <= FilePreviewLimits.maximumRenderableBytes else {
+            throw NSError(
+              domain: "OperatorFileViewer", code: 2,
+              userInfo: [
+                NSLocalizedDescriptionKey:
+                  "This Markdown file is too large to preview safely (limit: 256 KB). Open it in an external editor instead."
+              ])
+          }
+          let text = try String(contentsOfFile: validPath, encoding: .utf8)
+          let modifiedAt =
+            (try? FileManager.default.attributesOfItem(atPath: validPath)[.modificationDate])
+            as? Date
+          return MarkdownLoadPayload(
+            content: text, safePath: validPath, modifiedAt: modifiedAt)
+        }
+      }.value
+      guard !Task.isCancelled, let self else { return }
+      switch result {
+      case .success(let payload):
+        self.content = payload.content
+        self.modifiedAt = payload.modifiedAt
+        self.errorMessage = nil
+        self.revision += 1
+        self.loadPendingDiff(for: payload.safePath)
+      case .failure(let error):
+        self.content = ""
+        self.diffContent = nil
+        self.errorMessage = error.localizedDescription
+        self.modifiedAt = nil
       }
-      content = text
-      modifiedAt =
-        (try? FileManager.default.attributesOfItem(atPath: validPath)[.modificationDate]) as? Date
-      errorMessage = nil
-      revision += 1
-    } catch {
-      errorMessage = error.localizedDescription
-      modifiedAt = nil
-      revision += 1
+      if case .failure = result { self.revision += 1 }
     }
   }
+
+  private func loadPendingDiff(for safePath: String) {
+    diffTask?.cancel()
+    diffTask = Task { @MainActor [weak self] in
+      let diff = await Task.detached(priority: .utility) {
+        (try? GitRepository.diff(for: safePath)).map {
+          FilePreviewLimits.boundedPreview($0).content
+        }
+      }.value
+      guard !Task.isCancelled, let self else { return }
+      self.diffContent = diff
+      self.revision += 1
+    }
+  }
+}
+
+private struct MarkdownLoadPayload: Sendable {
+  let content: String
+  let safePath: String
+  let modifiedAt: Date?
 }
 
 enum MarkdownRenderer {
@@ -240,9 +345,11 @@ struct MarkdownDocumentView: View {
   @ObservedObject var document: MarkdownDocument
   var close: (() -> Void)? = nil
   @State private var mode: Mode = .rendered
+  @State private var didApplyInitialMode = false
   @Environment(\.colorScheme) private var colorScheme
 
   private enum Mode: String, CaseIterable, Identifiable {
+    case diff = "Diff"
     case rendered = "Rendered"
     case source = "Source"
     var id: String { rawValue }
@@ -251,8 +358,13 @@ struct MarkdownDocumentView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Picker("Mode", selection: $mode) { ForEach(Mode.allCases) { Text($0.rawValue).tag($0) } }
-          .pickerStyle(.segmented).frame(width: 180)
+        Picker("Mode", selection: $mode) {
+          if document.diffContent != nil { Text(Mode.diff.rawValue).tag(Mode.diff) }
+          Text(Mode.rendered.rawValue).tag(Mode.rendered)
+          Text(Mode.source.rawValue).tag(Mode.source)
+        }
+        .pickerStyle(.segmented)
+        .frame(width: document.diffContent == nil ? 180 : 250)
         Text(document.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         Spacer()
         if let modifiedAt = document.modifiedAt {
@@ -279,6 +391,8 @@ struct MarkdownDocumentView: View {
       if let error = document.errorMessage {
         ContentUnavailableView(
           "Cannot Open Markdown", systemImage: "doc.questionmark", description: Text(error))
+      } else if mode == .diff, let diffContent = document.diffContent {
+        markdownDiffEditor(diffContent)
       } else if mode == .rendered {
         MarkdownWebView(document: document, colorScheme: colorScheme)
       } else {
@@ -288,6 +402,49 @@ struct MarkdownDocumentView: View {
           ).padding(20).textSelection(.enabled)
         }
       }
+    }
+    .onChange(of: document.diffContent != nil) { _, hasDiff in
+      if hasDiff, !didApplyInitialMode {
+        didApplyInitialMode = true
+        mode = .diff
+      } else if !hasDiff, mode == .diff {
+        didApplyInitialMode = false
+        mode = .rendered
+      }
+    }
+  }
+
+  private func markdownDiffEditor(_ diff: String) -> some View {
+    GeometryReader { viewport in
+      ScrollView([.horizontal, .vertical]) {
+        HStack(alignment: .top, spacing: 0) {
+          Text(SourceEditorPresentation.lineNumbers(for: diff))
+            .foregroundStyle(.tertiary)
+            .multilineTextAlignment(.trailing)
+            .padding(.leading, 12)
+            .padding(.trailing, 10)
+            .padding(.vertical, 14)
+            .frame(minHeight: viewport.size.height, alignment: .topTrailing)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+            .accessibilityHidden(true)
+          Rectangle()
+            .fill(.separator)
+            .frame(width: 1)
+          Text(DiffSyntaxHighlighter.highlight(diff, colorScheme: colorScheme))
+            .textSelection(.enabled)
+            .padding(.leading, 14)
+            .padding(.trailing, 80)
+            .padding(.vertical, 14)
+            .frame(minHeight: viewport.size.height, alignment: .topLeading)
+        }
+        .font(.system(.body, design: .monospaced))
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(
+          minWidth: viewport.size.width, minHeight: viewport.size.height,
+          alignment: .topLeading)
+      }
+      .defaultScrollAnchor(.topLeading)
+      .background(Color(nsColor: .textBackgroundColor))
     }
   }
 }
@@ -309,13 +466,9 @@ struct MarkdownWebView: NSViewRepresentable {
     guard context.coordinator.shouldReload(revision: document.revision, palette: palette) else {
       return
     }
-    context.coordinator.revision = document.revision
-    context.coordinator.palette = palette
-    context.coordinator.load(
-      html: MarkdownRenderer.documentHTML(for: document.content, colorScheme: colorScheme),
-      baseURL: document.directoryURL,
-      backgroundColor: palette.backgroundColor,
-      in: view)
+    context.coordinator.beginRender(
+      content: document.content, revision: document.revision, palette: palette,
+      baseURL: document.directoryURL, in: view)
   }
   final class Coordinator: NSObject, WKNavigationDelegate {
     var revision = -1
@@ -324,9 +477,32 @@ struct MarkdownWebView: NSViewRepresentable {
     private var documentBaseURL: URL?
     private var backgroundColor = NSColor.clear
     private var retriedAfterProcessTermination = false
+    private var renderTask: Task<Void, Never>?
+
+    deinit { renderTask?.cancel() }
 
     func shouldReload(revision: Int, palette: MarkdownPalette) -> Bool {
       self.revision != revision || self.palette != palette
+    }
+
+    func beginRender(
+      content: String, revision: Int, palette: MarkdownPalette, baseURL: URL, in webView: WKWebView
+    ) {
+      renderTask?.cancel()
+      self.revision = revision
+      self.palette = palette
+      let backgroundColor = palette.backgroundColor
+      renderTask = Task { [weak self, weak webView] in
+        let html = await Task.detached(priority: .utility) {
+          MarkdownRenderer.documentHTML(for: content, colorScheme: palette.colorScheme)
+        }.value
+        guard !Task.isCancelled else { return }
+        await MainActor.run {
+          guard let self, let webView else { return }
+          self.load(
+            html: html, baseURL: baseURL, backgroundColor: backgroundColor, in: webView)
+        }
+      }
     }
 
     func load(html: String, baseURL: URL, backgroundColor: NSColor, in webView: WKWebView) {
@@ -388,6 +564,16 @@ enum HTMLFile {
 enum SecureHTMLRenderer {
   static let scheme = "operator-html"
 
+  /// Operator previews HTML as inert content. Pages that depend on JavaScript or a canvas would
+  /// otherwise look like a broken, empty document when WebKit correctly refuses to execute them.
+  /// Detect those pages and show an explanation in the document itself while retaining the safe
+  /// no-script policy.
+  static func containsInteractiveContent(_ source: String) -> Bool {
+    source.range(
+      of: #"<(script|canvas|iframe|object|embed|video|audio)\b"#,
+      options: [.regularExpression, .caseInsensitive]) != nil
+  }
+
   static func documentHTML(for source: String, colorScheme: ColorScheme) -> String {
     let palette =
       colorScheme == .dark
@@ -396,13 +582,22 @@ enum SecureHTMLRenderer {
     let securityHead = """
       <meta charset="utf-8">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; connect-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; img-src \(scheme): data:; style-src 'unsafe-inline' \(scheme):; font-src \(scheme): data:; media-src \(scheme):">
-      <style>:root { color-scheme: \(colorScheme == .dark ? "dark" : "light"); } html, body { min-height: 100%; } body { margin: 20px; background: \(palette.background); color: \(palette.foreground); font: -apple-system-body; }</style>
+      <style>:root { color-scheme: \(colorScheme == .dark ? "dark" : "light"); } html, body { min-height: 100%; } body { margin: 20px; background: \(palette.background); color: \(palette.foreground); font: -apple-system-body; } .operator-preview-notice { box-sizing: border-box; max-width: 720px; margin: 0 auto 20px; padding: 12px 16px; border: 1px solid \(colorScheme == .dark ? "#30363d" : "#d0d7de"); border-radius: 10px; background: \(colorScheme == .dark ? "#21262d" : "#f6f8fa"); color: \(palette.foreground); font: -apple-system-body; } .operator-preview-notice strong { display: block; margin-bottom: 4px; } .operator-preview-notice span { opacity: .78; }</style>
       """
+    let interactiveNotice = containsInteractiveContent(source)
+      ? "<aside class=\"operator-preview-notice\" role=\"note\"><strong>Interactive content is disabled in secure preview</strong><span>Scripts and embedded applications are blocked to protect your workspace. Open the file externally to run it.</span></aside>"
+      : ""
     if let range = source.range(
       of: #"<head\b[^>]*>"#, options: [.regularExpression, .caseInsensitive])
     {
       var document = source
       document.insert(contentsOf: securityHead, at: range.upperBound)
+      if !interactiveNotice.isEmpty,
+        let bodyRange = document.range(
+          of: #"<body\b[^>]*>"#, options: [.regularExpression, .caseInsensitive])
+      {
+        document.insert(contentsOf: interactiveNotice, at: bodyRange.upperBound)
+      }
       return document
     }
     if let range = source.range(
@@ -410,9 +605,15 @@ enum SecureHTMLRenderer {
     {
       var document = source
       document.insert(contentsOf: "<head>\(securityHead)</head>", at: range.upperBound)
+      if !interactiveNotice.isEmpty,
+        let bodyRange = document.range(
+          of: #"<body\b[^>]*>"#, options: [.regularExpression, .caseInsensitive])
+      {
+        document.insert(contentsOf: interactiveNotice, at: bodyRange.upperBound)
+      }
       return document
     }
-    return "<!doctype html><html><head>\(securityHead)</head><body>\(source)</body></html>"
+    return "<!doctype html><html><head>\(securityHead)</head><body>\(interactiveNotice)\(source)</body></html>"
   }
 }
 
@@ -449,6 +650,9 @@ private final class SecureHTMLSchemeHandler: NSObject, WKURLSchemeHandler {
       url.scheme?.lowercased() == SecureHTMLRenderer.scheme,
       url.host == "document", let directoryURL
     else {
+      Task { @MainActor in
+        OperatorDebugLog.record("html.scheme.invalidRequest", "request=\(urlSchemeTask.request.url?.absoluteString ?? "nil")", level: .warning)
+      }
       urlSchemeTask.didFailWithError(CocoaError(.fileNoSuchFile))
       return
     }
@@ -479,7 +683,13 @@ private final class SecureHTMLSchemeHandler: NSObject, WKURLSchemeHandler {
       urlSchemeTask.didReceive(response)
       urlSchemeTask.didReceive(data)
       urlSchemeTask.didFinish()
+      Task { @MainActor in
+        OperatorDebugLog.record("html.scheme.served", "path=\(url.path) bytes=\(data.count)")
+      }
     } catch {
+      Task { @MainActor in
+        OperatorDebugLog.record("html.scheme.failed", error.localizedDescription, level: .warning)
+      }
       urlSchemeTask.didFailWithError(error)
     }
   }
@@ -525,20 +735,42 @@ struct SecureHTMLWebView: NSViewRepresentable {
   func updateNSView(_ view: WKWebView, context: Context) {
     let renderKey = "\(revision)-\(colorScheme == .dark ? "dark" : "light")"
     guard context.coordinator.renderKey != renderKey else { return }
-    context.coordinator.renderKey = renderKey
-    context.coordinator.schemeHandler.update(
-      html: SecureHTMLRenderer.documentHTML(for: content, colorScheme: colorScheme),
-      directoryURL: URL(fileURLWithPath: path).deletingLastPathComponent())
-    view.underPageBackgroundColor =
-      colorScheme == .dark
-      ? NSColor(srgbRed: 22 / 255, green: 27 / 255, blue: 34 / 255, alpha: 1)
-      : NSColor(srgbRed: 246 / 255, green: 248 / 255, blue: 250 / 255, alpha: 1)
-    view.load(URLRequest(url: URL(string: "\(SecureHTMLRenderer.scheme)://document/view.html")!))
+    context.coordinator.beginRender(
+      content: content, path: path, colorScheme: colorScheme, renderKey: renderKey, in: view)
   }
 
   final class Coordinator: NSObject, WKNavigationDelegate {
     fileprivate let schemeHandler = SecureHTMLSchemeHandler()
     var renderKey = ""
+    private var renderTask: Task<Void, Never>?
+
+    deinit { renderTask?.cancel() }
+
+    func beginRender(
+      content: String, path: String, colorScheme: ColorScheme, renderKey: String, in webView: WKWebView
+    ) {
+      renderTask?.cancel()
+      self.renderKey = renderKey
+      let directoryURL = URL(fileURLWithPath: path).deletingLastPathComponent()
+      let backgroundColor = colorScheme == .dark
+        ? NSColor(srgbRed: 22 / 255, green: 27 / 255, blue: 34 / 255, alpha: 1)
+        : NSColor(srgbRed: 246 / 255, green: 248 / 255, blue: 250 / 255, alpha: 1)
+      renderTask = Task { [weak self, weak webView] in
+        let html = await Task.detached(priority: .utility) {
+          SecureHTMLRenderer.documentHTML(for: content, colorScheme: colorScheme)
+        }.value
+        guard !Task.isCancelled else { return }
+        await MainActor.run {
+          OperatorDebugLog.record("html.render.ready", "path=\(path) bytes=\(html.utf8.count)")
+        }
+        await MainActor.run {
+          guard let self, let webView else { return }
+          self.schemeHandler.update(html: html, directoryURL: directoryURL)
+          webView.underPageBackgroundColor = backgroundColor
+          webView.load(URLRequest(url: URL(string: "\(SecureHTMLRenderer.scheme)://document/view.html")!))
+        }
+      }
+    }
 
     func webView(
       _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -556,7 +788,43 @@ struct SecureHTMLWebView: NSViewRepresentable {
       } else if SecureHTMLNavigationPolicy.allowsInternalDocumentLoad(url) {
         decisionHandler(.allow)
       } else {
+        Task { @MainActor in
+          OperatorDebugLog.record("html.navigation.blocked", "url=\(url.absoluteString)", level: .warning)
+        }
         decisionHandler(.cancel)
+      }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+      Task { @MainActor in
+        OperatorDebugLog.record("html.navigation.finished", "url=\(webView.url?.absoluteString ?? "nil")")
+      }
+      webView.evaluateJavaScript("document.body ? document.body.innerText.slice(0, 200) : '<no body>'") {
+        value, error in
+        Task { @MainActor in
+          if let error {
+            OperatorDebugLog.record("html.navigation.domFailed", error.localizedDescription, level: .warning)
+          } else {
+            OperatorDebugLog.record("html.navigation.domReady", "text=\(String(describing: value))")
+          }
+        }
+      }
+    }
+
+    func webView(
+      _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error
+    ) {
+      Task { @MainActor in
+        OperatorDebugLog.record("html.navigation.failed", error.localizedDescription, level: .warning)
+      }
+    }
+
+    func webView(
+      _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+      withError error: Error
+    ) {
+      Task { @MainActor in
+        OperatorDebugLog.record("html.navigation.provisionalFailed", error.localizedDescription, level: .warning)
       }
     }
   }
@@ -567,8 +835,22 @@ struct ProjectFileNode: Identifiable, Hashable {
   let name: String
   let isDirectory: Bool
   let children: [ProjectFileNode]?
+  let childrenLoaded: Bool
+  let depth: Int
 
   var id: String { path }
+
+  init(
+    path: String, name: String, isDirectory: Bool, children: [ProjectFileNode]? = nil,
+    childrenLoaded: Bool? = nil, depth: Int = 0
+  ) {
+    self.path = path
+    self.name = name
+    self.isDirectory = isDirectory
+    self.children = children
+    self.childrenLoaded = childrenLoaded ?? !isDirectory
+    self.depth = depth
+  }
 }
 
 enum FileNavigatorAccessError: LocalizedError {
@@ -640,48 +922,78 @@ enum ProjectFileTreeLoader {
   {
     let root = try FileNavigatorDirectoryPolicy.readableDirectory(rawRoot, fileManager: fileManager)
     var remaining = maximumNodeCount
+    return try enumerate(
+      directory: root, rootPath: root.path, depth: 0, recursively: true, remaining: &remaining,
+      fileManager: fileManager)
+  }
 
-    func children(of directory: URL, depth: Int) throws -> [ProjectFileNode] {
-      guard depth <= maximumDepth, remaining > 0 else { return [] }
-      let urls = try fileManager.contentsOfDirectory(
-        at: directory,
-        includingPropertiesForKeys: [
-          .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isHiddenKey,
-        ],
-        options: [.skipsHiddenFiles])
-      return
-        try urls
-        .filter { !ignoredDirectoryNames.contains($0.lastPathComponent) }
-        .sorted {
-          let leftDirectory =
-            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-          let rightDirectory =
-            (try? $1.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-          if leftDirectory != rightDirectory { return leftDirectory }
-          return $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
-            == .orderedAscending
-        }
-        .compactMap { url in
-          guard remaining > 0 else { return nil }
-          let values = try url.resourceValues(forKeys: [
-            .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
-          ])
-          guard values.isSymbolicLink != true else { return nil }
-          let safePath = try WorkspacePathPolicy.canonicalContainedPath(
-            url.path, within: root.path)
-          remaining -= 1
-          if values.isDirectory == true {
-            return ProjectFileNode(
-              path: safePath, name: url.lastPathComponent, isDirectory: true,
-              children: try children(of: url, depth: depth + 1))
-          }
-          guard values.isRegularFile == true else { return nil }
+  /// Loads only one directory level. Descendants are intentionally left unloaded until the
+  /// user expands that folder, which keeps large repositories responsive at first render.
+  static func loadLevel(
+    root rawRoot: String, depth: Int = 0, fileManager: FileManager = .default
+  ) throws -> [ProjectFileNode] {
+    let root = try FileNavigatorDirectoryPolicy.readableDirectory(rawRoot, fileManager: fileManager)
+    var remaining = maximumNodeCount
+    return try enumerate(
+      directory: root, rootPath: root.path, depth: depth, recursively: false, remaining: &remaining,
+      fileManager: fileManager)
+  }
+
+  private struct DirectoryEntry {
+    let url: URL
+    let isDirectory: Bool
+    let isRegularFile: Bool
+    let isSymbolicLink: Bool
+  }
+
+  private static func enumerate(
+    directory: URL, rootPath: String, depth: Int, recursively: Bool, remaining: inout Int,
+    fileManager: FileManager
+  ) throws -> [ProjectFileNode] {
+    guard depth <= maximumDepth, remaining > 0 else { return [] }
+    let entries = try fileManager.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+      options: [.skipsHiddenFiles])
+      .compactMap { url -> DirectoryEntry? in
+        guard !ignoredDirectoryNames.contains(url.lastPathComponent) else { return nil }
+        let values = try? url.resourceValues(forKeys: [
+          .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+        ])
+        guard let values else { return nil }
+        return DirectoryEntry(
+          url: url, isDirectory: values.isDirectory == true,
+          isRegularFile: values.isRegularFile == true, isSymbolicLink: values.isSymbolicLink == true)
+      }
+      .sorted {
+        if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+        return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent)
+          == .orderedAscending
+      }
+
+    return try entries.compactMap { entry in
+      guard remaining > 0, !entry.isSymbolicLink else { return nil }
+      let safePath = try WorkspacePathPolicy.canonicalContainedPath(
+        entry.url.path, within: rootPath)
+      remaining -= 1
+      guard entry.isDirectory || entry.isRegularFile else { return nil }
+      if entry.isDirectory {
+        if recursively {
+          let children = try enumerate(
+            directory: entry.url, rootPath: rootPath, depth: depth + 1, recursively: true,
+            remaining: &remaining, fileManager: fileManager)
           return ProjectFileNode(
-            path: safePath, name: url.lastPathComponent, isDirectory: false, children: nil)
+            path: safePath, name: entry.url.lastPathComponent, isDirectory: true,
+            children: children, childrenLoaded: true, depth: depth + 1)
         }
+        return ProjectFileNode(
+          path: safePath, name: entry.url.lastPathComponent, isDirectory: true,
+          children: nil, childrenLoaded: false, depth: depth + 1)
+      }
+      return ProjectFileNode(
+        path: safePath, name: entry.url.lastPathComponent, isDirectory: false,
+        children: nil, childrenLoaded: true, depth: depth + 1)
     }
-
-    return try children(of: root, depth: 0)
   }
 
   static func filtering(_ nodes: [ProjectFileNode], query: String) -> [ProjectFileNode] {
@@ -693,8 +1005,51 @@ enum ProjectFileTreeLoader {
       let matches = filtering(children, query: needle)
       guard !matches.isEmpty else { return nil }
       return ProjectFileNode(
-        path: node.path, name: node.name, isDirectory: true, children: matches)
+        path: node.path, name: node.name, isDirectory: true, children: matches,
+        childrenLoaded: true, depth: node.depth)
     }
+  }
+}
+
+/// Indexed Git decorations avoid scanning every changed path for every visible tree row.
+struct ProjectFileGitIndex {
+  private let files: [String: GitChangedFile]
+  private let changedDirectories: Set<String>
+
+  init(changes: [GitChangedFile]) {
+    var files: [String: GitChangedFile] = [:]
+    var directories = Set<String>()
+    for change in changes {
+      files[change.path] = change
+      var directory = (change.path as NSString).deletingLastPathComponent
+      while !directory.isEmpty && directory != "." && directory != "/" {
+        directories.insert(directory)
+        let parent = (directory as NSString).deletingLastPathComponent
+        guard parent != directory else { break }
+        directory = parent
+      }
+      directories.insert("")
+    }
+    self.files = files
+    changedDirectories = directories
+  }
+
+  func decoration(for node: ProjectFileNode, root: String) -> (label: String, color: Color)? {
+    let rootPath = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL.path
+    let nodePath = URL(fileURLWithPath: node.path).standardizedFileURL.path
+    let relative = nodePath == rootPath
+      ? ""
+      : String(nodePath.dropFirst(rootPath.hasSuffix("/") ? rootPath.count : rootPath.count + 1))
+    if let change = files[relative] {
+      if change.section == .untracked { return ("U", .green) }
+      switch change.status {
+      case "A": return ("A", .green)
+      case "D": return ("D", .red)
+      case "R": return ("R", .purple)
+      default: return ("M", .orange)
+      }
+    }
+    return node.isDirectory && changedDirectories.contains(relative) ? ("•", .orange) : nil
   }
 }
 
@@ -705,11 +1060,14 @@ struct ProjectFileNavigator: View {
   let fileWatchingEnabled: Bool
   @State private var currentRoot: String
   @State private var nodes: [ProjectFileNode] = []
+  @State private var searchResults: [ProjectFileNode]?
   @State private var changes: [GitChangedFile] = []
+  @State private var gitIndex = ProjectFileGitIndex(changes: [])
   @State private var query = ""
   @State private var isLoading = true
   @State private var errorMessage: String?
   @State private var revision = 0
+  @State private var refreshRevision = 0
   @State private var repositoryRoot: String?
   @State private var gitObservation: GitWorkspaceObservation?
   @State private var changesExpanded = true
@@ -729,7 +1087,7 @@ struct ProjectFileNavigator: View {
   private var parentDirectory: URL? { FileNavigatorDirectoryPolicy.parent(of: currentRoot) }
 
   private var visibleNodes: [ProjectFileNode] {
-    ProjectFileTreeLoader.filtering(nodes, query: query)
+    query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nodes : (searchResults ?? [])
   }
 
   private var uniqueChanges: [GitChangedFile] {
@@ -762,6 +1120,7 @@ struct ProjectFileNavigator: View {
         .buttonStyle(.borderless)
         .disabled(parentDirectory == nil)
         .help("Go to parent folder")
+        .fastTooltip("Go to parent folder")
         .accessibilityIdentifier("operator.fileNavigator.up")
         Button {
           chooseFolder()
@@ -770,6 +1129,7 @@ struct ProjectFileNavigator: View {
         }
         .buttonStyle(.borderless)
         .help("Choose a folder to browse")
+        .fastTooltip("Choose a folder to browse")
         .accessibilityIdentifier("operator.fileNavigator.chooseFolder")
         Button {
           NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: currentRoot)])
@@ -778,6 +1138,7 @@ struct ProjectFileNavigator: View {
         }
         .buttonStyle(.borderless)
         .help("Reveal project in Finder")
+        .fastTooltip("Reveal project in Finder")
         Button {
           revision &+= 1
         } label: {
@@ -785,6 +1146,7 @@ struct ProjectFileNavigator: View {
         }
         .buttonStyle(.borderless)
         .help("Refresh files")
+        .fastTooltip("Refresh files")
         Button(action: close) {
           Image(systemName: "sidebar.trailing")
             .frame(
@@ -794,6 +1156,7 @@ struct ProjectFileNavigator: View {
         }
         .buttonStyle(.borderless)
         .help("Hide file navigator")
+        .fastTooltip("Hide file navigator")
         .accessibilityIdentifier("operator.fileNavigator.close")
       }
       .padding(FileNavigatorChrome.headerInset)
@@ -868,8 +1231,9 @@ struct ProjectFileNavigator: View {
             }
             ForEach(visibleNodes) { node in
               ProjectFileTreeNodeView(
-                node: node, root: repositoryRoot ?? currentRoot, changes: changes,
-                openFile: openFile, depth: 0)
+                node: node, root: repositoryRoot ?? currentRoot, gitIndex: gitIndex,
+                refreshRevision: refreshRevision, openFile: openFile, depth: 0,
+                loadChildren: loadChildren)
             }
           }
           .padding(.horizontal, 7)
@@ -880,6 +1244,26 @@ struct ProjectFileNavigator: View {
     .background(.bar)
     .task(id: "\(currentRoot)#\(revision)#\(fileWatchingEnabled)") {
       await reload()
+    }
+    .task(id: "\(currentRoot)#search#\(query)") {
+      guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        searchResults = nil
+        return
+      }
+      do {
+        try await Task.sleep(for: .milliseconds(150))
+      } catch {
+        return
+      }
+      let root = currentRoot
+      let query = query
+      let result = await Task.detached(priority: .utility) {
+        guard let allNodes = try? ProjectFileTreeLoader.load(root: root)
+        else { return [ProjectFileNode]() }
+        return ProjectFileTreeLoader.filtering(allNodes, query: query)
+      }.value
+      guard !Task.isCancelled else { return }
+      searchResults = result
     }
     .onChange(of: root) { _, newRoot in
       navigate(to: URL(fileURLWithPath: newRoot, isDirectory: true))
@@ -914,16 +1298,38 @@ struct ProjectFileNavigator: View {
     isLoading = true
     errorMessage = nil
     let root = currentRoot
+    OperatorDebugLog.record("fileNavigator.load.begin", "root=\(root)")
     let result = await Task.detached(priority: .utility) {
-      Result { try ProjectFileTreeLoader.load(root: root) }
+      Result { try ProjectFileTreeLoader.loadLevel(root: root) }
     }.value
+    guard !Task.isCancelled, root == currentRoot else { return }
     switch result {
     case .success(let loaded):
       nodes = loaded
+      searchResults = nil
+      isLoading = false
+      OperatorDebugLog.record(
+        "fileNavigator.load.filesReady", "root=\(root) entries=\(loaded.count)")
     case .failure(let error):
       nodes = []
+      searchResults = nil
       errorMessage = error.localizedDescription
+      isLoading = false
+      OperatorDebugLog.record(
+        "fileNavigator.load.failed", error.localizedDescription, level: .warning,
+        metadata: ["root": root])
+      return
     }
+
+    // Give SwiftUI a frame to present the directory before optional Git decoration begins.
+    // Repository inspection is supplementary and must never keep the navigator in its loading
+    // state during app restoration.
+    do {
+      try await Task.sleep(for: .milliseconds(120))
+    } catch {
+      return
+    }
+    guard !Task.isCancelled, root == currentRoot else { return }
     let git = await Task.detached(priority: .utility) {
       guard GitRepository.isRepository(containing: root),
         let repositoryRoot = try? GitRepository.repositoryRoot(containing: root)
@@ -933,24 +1339,29 @@ struct ProjectFileNavigator: View {
         changes: (try? GitRepository.status(in: repositoryRoot)) ?? []
       )
     }.value
+    guard !Task.isCancelled, root == currentRoot else { return }
     repositoryRoot = git.root
     changes = git.changes
+    gitIndex = ProjectFileGitIndex(changes: git.changes)
+    OperatorDebugLog.record(
+      "fileNavigator.load.gitReady",
+      "root=\(root) repository=\(git.root != nil) changes=\(git.changes.count)")
     gitObservation =
       fileWatchingEnabled
       ? git.root.map { repositoryRoot in
         GitWorkspaceMonitor.shared.observe(rootPath: repositoryRoot) { snapshot in
-          Task.detached(priority: .utility) {
-            let refreshedNodes = try? ProjectFileTreeLoader.load(root: root)
-            await MainActor.run {
-              changes = snapshot.changes
-              if let refreshedNodes {
-                nodes = refreshedNodes
-              }
+          Task { @MainActor in
+            let previousPaths = Set(changes.map(\.path))
+            let updatedPaths = Set(snapshot.changes.map(\.path))
+            changes = snapshot.changes
+            gitIndex = ProjectFileGitIndex(changes: snapshot.changes)
+            refreshRevision &+= 1
+            if previousPaths != updatedPaths {
+              scheduleCurrentLevelRefresh(root: root)
             }
           }
         }
       } : nil
-    isLoading = false
   }
 
   private func navigate(to rawURL: URL) {
@@ -962,7 +1373,9 @@ struct ProjectFileNavigator: View {
       currentRoot = directory.path
       query = ""
       nodes = []
+      searchResults = nil
       changes = []
+      gitIndex = ProjectFileGitIndex(changes: [])
       repositoryRoot = nil
       gitObservation = nil
       revision &+= 1
@@ -984,31 +1397,70 @@ struct ProjectFileNavigator: View {
     guard panel.runModal() == .OK, let url = panel.url else { return }
     navigate(to: url)
   }
+
+  private func scheduleCurrentLevelRefresh(root: String) {
+    let expectedRevision = refreshRevision
+    Task.detached(priority: .utility) {
+      try? await Task.sleep(for: .milliseconds(120))
+      guard !Task.isCancelled else { return }
+      let refreshed = try? ProjectFileTreeLoader.loadLevel(root: root)
+      await MainActor.run {
+        guard expectedRevision == refreshRevision, let refreshed else { return }
+        nodes = refreshed
+      }
+    }
+  }
+
+  private func loadChildren(_ path: String, depth: Int) async -> [ProjectFileNode] {
+    (try? await Task.detached(priority: .utility) {
+      try ProjectFileTreeLoader.loadLevel(root: path, depth: depth)
+    }.value) ?? []
+  }
 }
 
 private struct ProjectFileTreeNodeView: View {
   let node: ProjectFileNode
   let root: String
-  let changes: [GitChangedFile]
+  let gitIndex: ProjectFileGitIndex
+  let refreshRevision: Int
   let openFile: (String) -> Void
   let depth: Int
+  let loadChildren: (String, Int) async -> [ProjectFileNode]
   @State private var isExpanded = false
+  @State private var loadedChildren: [ProjectFileNode]?
+  @State private var isLoadingChildren = false
+
+  private var children: [ProjectFileNode] {
+    loadedChildren ?? node.children ?? []
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 1) {
       if node.isDirectory {
         Button {
-          withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() }
+          let shouldLoad = !isExpanded && !node.childrenLoaded && loadedChildren == nil
+          withAnimation(.easeInOut(duration: 0.16)) {
+            isExpanded.toggle()
+          }
+          if shouldLoad {
+            loadDirectoryChildren()
+          }
         } label: {
           nodeRow
         }
         .buttonStyle(.plain)
         .contextMenu { revealButton }
-        if isExpanded, let children = node.children {
+        if isExpanded, isLoadingChildren {
+          ProgressView()
+            .controlSize(.small)
+            .padding(.leading, CGFloat(depth + 1) * 18 + 22)
+            .padding(.vertical, 4)
+        }
+        if isExpanded, !children.isEmpty {
           ForEach(children) { child in
             ProjectFileTreeNodeView(
-              node: child, root: root, changes: changes, openFile: openFile,
-              depth: depth + 1)
+              node: child, root: root, gitIndex: gitIndex, refreshRevision: refreshRevision,
+              openFile: openFile, depth: depth + 1, loadChildren: loadChildren)
           }
         }
       } else {
@@ -1020,6 +1472,23 @@ private struct ProjectFileTreeNodeView: View {
         .buttonStyle(.plain)
         .contextMenu { revealButton }
       }
+    }
+    .onChange(of: refreshRevision) { _, _ in
+      guard isExpanded, !node.childrenLoaded else { return }
+      loadDirectoryChildren()
+    }
+  }
+
+  private func loadDirectoryChildren() {
+    guard !isLoadingChildren else { return }
+    isLoadingChildren = true
+    let path = node.path
+    let depth = node.depth + 1
+    Task {
+      let result = await loadChildren(path, depth)
+      guard !Task.isCancelled else { return }
+      loadedChildren = result
+      isLoadingChildren = false
     }
   }
 
@@ -1047,7 +1516,7 @@ private struct ProjectFileTreeNodeView: View {
           .font(.callout)
           .lineLimit(1)
         Spacer(minLength: 4)
-        if let decoration = gitDecoration {
+        if let decoration = gitIndex.decoration(for: node, root: root) {
           Text(decoration.label)
             .font(.callout.bold())
             .foregroundStyle(decoration.color)
@@ -1076,22 +1545,6 @@ private struct ProjectFileTreeNodeView: View {
     }
   }
 
-  private var gitDecoration: (label: String, color: Color)? {
-    let relative = URL(fileURLWithPath: node.path).path.replacingOccurrences(
-      of: URL(fileURLWithPath: root).path + "/", with: "")
-    let relevant = changes.filter {
-      node.isDirectory ? $0.path.hasPrefix(relative + "/") : $0.path == relative
-    }
-    guard let change = relevant.first else { return nil }
-    if node.isDirectory { return ("•", .orange) }
-    if change.section == .untracked { return ("U", .green) }
-    switch change.status {
-    case "A": return ("A", .green)
-    case "D": return ("D", .red)
-    case "R": return ("R", .purple)
-    default: return ("M", .orange)
-    }
-  }
 }
 
 struct ProjectFileViewer: View {
@@ -1105,13 +1558,37 @@ struct ProjectFileViewer: View {
   let fileWatchingEnabled: Bool
   @Environment(\.colorScheme) private var colorScheme
   @State private var content = ""
+  @State private var diffContent: String?
+  @State private var previewWasTruncated = false
   @State private var errorMessage: String?
   @State private var githubURL: URL?
   @State private var revision = 0
   @State private var deletionReported = false
-  @State private var htmlMode: HTMLMode = .rendered
+  @State private var presentationMode: PresentationMode = .raw
 
-  private enum HTMLMode: String, CaseIterable, Identifiable {
+  init(
+    path: String, workspaceDirectory: String, isFocused: Bool, showsFocusIndicator: Bool,
+    select: @escaping () -> Void, close: @escaping () -> Void, onDeleted: @escaping () -> Void,
+    fileWatchingEnabled: Bool
+  ) {
+    self.path = path
+    self.workspaceDirectory = workspaceDirectory
+    self.isFocused = isFocused
+    self.showsFocusIndicator = showsFocusIndicator
+    self.select = select
+    self.close = close
+    self.onDeleted = onDeleted
+    self.fileWatchingEnabled = fileWatchingEnabled
+    // Code and text files open on the pending diff when one exists. HTML opens in its
+    // rendered presentation; switching to Diff is always an explicit user action so a
+    // change set can never replace the rendered HTML unexpectedly.
+    _presentationMode = State(
+      initialValue: HTMLFile.isSupported(path: path) ? .rendered : .diff)
+  }
+
+  private enum PresentationMode: String, CaseIterable, Identifiable {
+    case diff = "Diff"
+    case raw = "Raw"
     case rendered = "Rendered"
     case source = "Source"
 
@@ -1133,14 +1610,24 @@ struct ProjectFileViewer: View {
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
+        if previewWasTruncated {
+          Label("Preview truncated", systemImage: "scissors")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fastTooltip("Only the first 1 MB is shown")
+        }
         Spacer()
-        if isHTML {
-          Picker("HTML mode", selection: $htmlMode) {
-            ForEach(HTMLMode.allCases) { Text($0.rawValue).tag($0) }
+        let presentationModes = availablePresentationModes
+        if presentationModes.count > 1 {
+          Picker("File presentation", selection: $presentationMode) {
+            ForEach(presentationModes) { mode in
+              Text(mode.rawValue).tag(mode)
+            }
           }
           .pickerStyle(.segmented)
-          .frame(width: 180)
-          .accessibilityIdentifier("operator.htmlViewer.mode")
+          .frame(width: isHTML ? 236 : 132)
+          .labelsHidden()
+          .accessibilityIdentifier("operator.fileViewer.presentation")
         }
         Button {
           NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -1148,18 +1635,21 @@ struct ProjectFileViewer: View {
           Image(systemName: "arrow.forward.square")
         }
         .help("Reveal in Finder")
+        .fastTooltip("Reveal in Finder")
         Button {
           revision &+= 1
         } label: {
           Image(systemName: "arrow.clockwise")
         }
         .help("Reload file")
+        .fastTooltip("Reload file")
         Button(action: close) {
           Image(systemName: "xmark.circle.fill")
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
         .help("Close file pane")
+        .fastTooltip("Close file pane")
       }
       .padding(.horizontal, 10)
       .padding(.vertical, 8)
@@ -1169,13 +1659,14 @@ struct ProjectFileViewer: View {
       Divider()
 
       if let errorMessage {
-        ContentUnavailableView(
-          "Cannot preview file", systemImage: "doc.questionmark",
-          description: Text(errorMessage))
-      } else if isHTML, htmlMode == .rendered {
+        unsupportedFileView(errorMessage)
+      } else if presentationMode == .diff, let diffContent {
+        diffEditor(diffContent)
+      } else if isHTML, presentationMode == .rendered {
         SecureHTMLWebView(
           content: content, path: path, revision: revision, colorScheme: colorScheme
         )
+        .id("html-preview:\(path):\(revision)")
         .overlay(alignment: .topTrailing) { externalActions }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       } else {
@@ -1190,6 +1681,57 @@ struct ProjectFileViewer: View {
     .task(id: "\(path)#\(fileWatchingEnabled)") {
       if fileWatchingEnabled { await monitorFileChanges() }
     }
+  }
+
+  private var availablePresentationModes: [PresentationMode] {
+    if isHTML {
+      return diffContent == nil ? [.rendered, .source] : [.diff, .rendered, .source]
+    }
+    return diffContent == nil ? [] : [.diff, .raw]
+  }
+
+  private func unsupportedFileView(_ message: String) -> some View {
+    VStack(spacing: 18) {
+      Image(systemName: "doc.questionmark")
+        .font(.system(size: 34, weight: .medium))
+        .foregroundStyle(.secondary)
+      VStack(spacing: 7) {
+        Text("Cannot preview file")
+          .font(.title2.weight(.semibold))
+        Text(message)
+          .font(.body)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .frame(maxWidth: 480)
+      }
+      HStack(spacing: 10) {
+        Button {
+          revealInFinder()
+        } label: {
+          Label("Reveal in Finder", systemImage: "folder")
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("operator.fileViewer.revealInFinder")
+
+        Button {
+          NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        } label: {
+          Label("Open with Default App", systemImage: "arrow.up.right.square")
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("operator.fileViewer.openExternally")
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding(32)
+    .background(Color(nsColor: .windowBackgroundColor))
+  }
+
+  private func revealInFinder() {
+    let url = FileManager.default.fileExists(atPath: path)
+      ? URL(fileURLWithPath: path)
+      : URL(fileURLWithPath: path).deletingLastPathComponent()
+    NSWorkspace.shared.activateFileViewerSelecting([url])
   }
 
   private var sourceEditor: some View {
@@ -1208,7 +1750,51 @@ struct ProjectFileViewer: View {
           Rectangle()
             .fill(.separator)
             .frame(width: 1)
-          Text(CodeSyntaxHighlighter.highlight(content, path: path, colorScheme: colorScheme))
+          Text(highlightedSource)
+            .textSelection(.enabled)
+            .padding(.leading, 14)
+            .padding(.trailing, 80)
+            .padding(.vertical, 14)
+            .frame(minHeight: viewport.size.height, alignment: .topLeading)
+        }
+        .font(.system(.body, design: .monospaced))
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(
+          minWidth: viewport.size.width, minHeight: viewport.size.height,
+          alignment: .topLeading)
+      }
+      .defaultScrollAnchor(.topLeading)
+      .background(Color(nsColor: .textBackgroundColor))
+      .overlay(alignment: .topTrailing) { externalActions }
+    }
+  }
+
+  private var highlightedSource: AttributedString {
+    // Regex-based highlighting is intentionally skipped for larger previews. Rendering a plain
+    // monospaced string keeps generated logs and minified source responsive.
+    guard content.utf8.count <= FilePreviewLimits.maximumRenderableBytes else {
+      return AttributedString(content)
+    }
+    return CodeSyntaxHighlighter.highlight(content, path: path, colorScheme: colorScheme)
+  }
+
+  private func diffEditor(_ diff: String) -> some View {
+    GeometryReader { viewport in
+      ScrollView([.horizontal, .vertical]) {
+        HStack(alignment: .top, spacing: 0) {
+          Text(SourceEditorPresentation.lineNumbers(for: diff))
+            .foregroundStyle(.tertiary)
+            .multilineTextAlignment(.trailing)
+            .padding(.leading, 12)
+            .padding(.trailing, 10)
+            .padding(.vertical, 14)
+            .frame(minHeight: viewport.size.height, alignment: .topTrailing)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+            .accessibilityHidden(true)
+          Rectangle()
+            .fill(.separator)
+            .frame(width: 1)
+          Text(DiffSyntaxHighlighter.highlight(diff, colorScheme: colorScheme))
             .textSelection(.enabled)
             .padding(.leading, 14)
             .padding(.trailing, 80)
@@ -1231,6 +1817,19 @@ struct ProjectFileViewer: View {
   private var externalActions: some View {
     HStack(spacing: 8) {
       Button {
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+      } label: {
+        Image(systemName: "arrow.up.right.square")
+          .frame(width: 18, height: 18)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .help("Open this file with the default app")
+      .accessibilityLabel("Open with Default App")
+      .accessibilityIdentifier("operator.fileViewer.openExternally")
+      .fastTooltip("Open with Default App")
+
+      Button {
         SourceFileExternalLauncher.openInVisualStudioCode(path)
       } label: {
         Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -1246,6 +1845,7 @@ struct ProjectFileViewer: View {
       )
       .accessibilityLabel("Open in Visual Studio Code")
       .accessibilityIdentifier("operator.fileViewer.openInVSCode")
+      .fastTooltip("Open in Visual Studio Code")
 
       if let githubURL {
         Button {
@@ -1259,6 +1859,7 @@ struct ProjectFileViewer: View {
         .help(githubURL.absoluteString)
         .accessibilityLabel("Open on GitHub")
         .accessibilityIdentifier("operator.fileViewer.openOnGitHub")
+        .fastTooltip("Open on GitHub")
       }
     }
     .padding(14)
@@ -1266,6 +1867,7 @@ struct ProjectFileViewer: View {
 
   private func monitorFileChanges() async {
     var previous = OpenFileSnapshot.capture(path)
+    var previousGitFingerprint = await gitChangeFingerprint()
     while !Task.isCancelled {
       do {
         try await Task.sleep(for: .milliseconds(900))
@@ -1273,8 +1875,10 @@ struct ProjectFileViewer: View {
         return
       }
       let current = OpenFileSnapshot.capture(path)
-      guard current != previous else { continue }
+      let currentGitFingerprint = await gitChangeFingerprint()
+      guard current != previous || currentGitFingerprint != previousGitFingerprint else { continue }
       previous = current
+      previousGitFingerprint = currentGitFingerprint
       if current.exists {
         deletionReported = false
         revision &+= 1
@@ -1286,17 +1890,32 @@ struct ProjectFileViewer: View {
     }
   }
 
+  private func gitChangeFingerprint() async -> String? {
+    let path = path
+    return await Task.detached(priority: .utility) {
+      guard let root = try? GitRepository.repositoryRoot(containing: path),
+        let changes = try? GitRepository.status(in: root)
+      else { return nil }
+      let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+      let relativePath = String(
+        path.dropFirst(rootURL.path.hasSuffix("/") ? root.count : root.count + 1))
+      let matching = changes.filter { $0.path == relativePath }
+      guard !matching.isEmpty else { return nil }
+      return matching.map { $0.id + ":" + $0.status }.joined(separator: "|")
+    }.value
+  }
+
   private func load() async {
     let path = path
     let workspaceDirectory = workspaceDirectory
-    let result = await Task.detached(priority: .utility) {
-      Result { () throws -> ProjectFilePreviewPayload in
+    let fileResult = await Task.detached(priority: .utility) {
+      Result { () throws -> ProjectFileContentPayload in
         let safePath = try WorkspacePathPolicy.canonicalContainedPath(
           path, within: workspaceDirectory)
         let url = URL(fileURLWithPath: safePath)
         let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
         guard values.isRegularFile == true else { throw CocoaError(.fileReadUnsupportedScheme) }
-        guard (values.fileSize ?? 0) <= 5 * 1024 * 1024 else {
+        guard (values.fileSize ?? 0) <= FilePreviewLimits.maximumTextBytes else {
           throw NSError(
             domain: "OperatorFileViewer", code: 1,
             userInfo: [NSLocalizedDescriptionKey: "File exceeds the 5 MB preview limit."])
@@ -1304,25 +1923,62 @@ struct ProjectFileViewer: View {
         guard let value = try String(contentsOf: url, encoding: .utf8) as String? else {
           throw MarkdownViewerError.invalidText
         }
-        return ProjectFilePreviewPayload(
-          content: value, githubURL: GitRepository.githubFileURL(for: safePath))
+        let preview = FilePreviewLimits.boundedPreview(value)
+        return ProjectFileContentPayload(
+          safePath: safePath,
+          content: preview.content,
+          previewWasTruncated: preview.isTruncated,
+          fileSize: UInt64(values.fileSize ?? 0))
       }
     }.value
-    switch result {
+    switch fileResult {
     case .success(let payload):
       content = payload.content
-      githubURL = payload.githubURL
+      previewWasTruncated = payload.previewWasTruncated
+      diffContent = nil
+      githubURL = nil
+      presentationMode = isHTML ? .rendered : .raw
       errorMessage = nil
+
+      // Git is deliberately best-effort and independent from opening the file. A slow repo,
+      // disconnected worktree, or large pending patch must not hold the file viewer hostage.
+      let safePath = payload.safePath
+      let fileSize = payload.fileSize
+      let metadata = await Task.detached(priority: .utility) {
+        guard fileSize <= FilePreviewLimits.maximumRenderableBytes else {
+          return ProjectFileMetadataPayload(diffContent: nil, githubURL: nil)
+        }
+        let diff = (try? GitRepository.diff(for: safePath)).map {
+          FilePreviewLimits.boundedPreview($0).content
+        }
+        return ProjectFileMetadataPayload(
+          diffContent: diff, githubURL: GitRepository.githubFileURL(for: safePath))
+      }.value
+      guard !Task.isCancelled else { return }
+      diffContent = metadata.diffContent
+      githubURL = metadata.githubURL
+      if !isHTML, metadata.diffContent != nil {
+        presentationMode = .diff
+      }
     case .failure(let error):
       content = ""
+      previewWasTruncated = false
+      diffContent = nil
       githubURL = nil
       errorMessage = error.localizedDescription
     }
   }
 }
 
-private struct ProjectFilePreviewPayload: Sendable {
+private struct ProjectFileContentPayload: Sendable {
+  let safePath: String
   let content: String
+  let previewWasTruncated: Bool
+  let fileSize: UInt64
+}
+
+private struct ProjectFileMetadataPayload: Sendable {
+  let diffContent: String?
   let githubURL: URL?
 }
 
@@ -1414,5 +2070,46 @@ enum CodeSyntaxHighlighter {
         : (hashComments ? #"(?m)#.*$"# : #"(?m)//.*$|/\*[\s\S]*?\*/"#),
       color: palette.comment)
     return AttributedString(attributed)
+  }
+}
+
+enum DiffSyntaxHighlighter {
+  static func highlight(_ source: String, colorScheme: ColorScheme) -> AttributedString {
+    let result = NSMutableAttributedString()
+    let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    let colors: (text: NSColor, addition: NSColor, deletion: NSColor, hunk: NSColor, metadata: NSColor) =
+      colorScheme == .dark
+      ? (
+        text: .textColor, addition: .systemGreen, deletion: .systemRed,
+        hunk: .systemPurple, metadata: .systemBlue
+      )
+      : (
+        text: .textColor, addition: .systemGreen, deletion: .systemRed,
+        hunk: .systemIndigo, metadata: .systemBlue
+      )
+
+    for line in lines {
+      let isAddition = line.hasPrefix("+") && !line.hasPrefix("+++")
+      let isDeletion = line.hasPrefix("-") && !line.hasPrefix("---")
+      let isHunk = line.hasPrefix("@@")
+      let isMetadata = line.hasPrefix("diff ") || line.hasPrefix("index ")
+        || line.hasPrefix("---") || line.hasPrefix("+++")
+      let color =
+        isAddition ? colors.addition
+        : isDeletion ? colors.deletion
+        : isHunk ? colors.hunk
+        : isMetadata ? colors.metadata
+        : colors.text
+      var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: color]
+      if isAddition {
+        attributes[.backgroundColor] = NSColor.systemGreen.withAlphaComponent(0.12)
+      } else if isDeletion {
+        attributes[.backgroundColor] = NSColor.systemRed.withAlphaComponent(0.12)
+      } else if isHunk {
+        attributes[.backgroundColor] = NSColor.systemPurple.withAlphaComponent(0.10)
+      }
+      result.append(NSAttributedString(string: line + "\n", attributes: attributes))
+    }
+    return AttributedString(result)
   }
 }

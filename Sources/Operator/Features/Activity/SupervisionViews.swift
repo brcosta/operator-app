@@ -185,6 +185,7 @@ struct TaskBriefEditor: View {
 
 struct SessionRadarButton: View {
   let files: [GitChangedFile]
+  let openFile: (String) -> Void
   @State private var isPresented = false
 
   private var presentation: SessionFileRadarPresentation {
@@ -209,7 +210,7 @@ struct SessionRadarButton: View {
       .accessibilityLabel(presentation.accessibilityLabel)
       .accessibilityIdentifier("operator.sessionFileRadar")
       .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-        SessionRadarPopover(presentation: presentation)
+        SessionRadarPopover(presentation: presentation, openFile: openFile)
       }
       .onChange(of: presentation.isEmpty) { _, isEmpty in
         if isEmpty { isPresented = false }
@@ -220,6 +221,7 @@ struct SessionRadarButton: View {
 
 private struct SessionRadarPopover: View {
   let presentation: SessionFileRadarPresentation
+  let openFile: (String) -> Void
 
   private var listHeight: CGFloat {
     let sectionHeaders = CGFloat(presentation.sections.count) * 26
@@ -254,17 +256,23 @@ private struct SessionRadarPopover: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
               ForEach(section.files) { file in
-                HStack(spacing: 9) {
-                  Text(file.status.trimmingCharacters(in: .whitespaces))
-                    .font(.caption2.monospaced().weight(.semibold))
-                    .foregroundStyle(.orange)
-                    .frame(minWidth: 20, alignment: .leading)
-                  Text(file.path)
-                    .font(.caption.monospaced())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(file.path)
+                Button { openFile(file.path) } label: {
+                  HStack(spacing: 9) {
+                    Text(file.status.trimmingCharacters(in: .whitespaces))
+                      .font(.caption2.monospaced().weight(.semibold))
+                      .foregroundStyle(.orange)
+                      .frame(minWidth: 20, alignment: .leading)
+                    Text(file.path)
+                      .font(.caption.monospaced())
+                      .lineLimit(1)
+                      .truncationMode(.middle)
+                      .help(file.path)
+                    Spacer(minLength: 0)
+                  }
                 }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .help("Open (file.path)")
               }
             }
           }
